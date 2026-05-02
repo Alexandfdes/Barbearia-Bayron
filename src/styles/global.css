@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* src/styles/global.css */
+@theme {
+  /* Cores da Marca Bayron */
+  --color-carbon: #09090b;
+  /* Fundo principal */
+  --color-forest: #062e20;
+  /* Verde institucional */
+  --color-forest-light: #06694a;
+  /* Hover e detalhes */
+  --color-bayron-green: #05a46e;
+  /* Verde de Conversão (CTA) */
+  --color-bayron-hover: #048059;
+  /* Hover dos CTAs */
+  --color-ice: #fafafa;
+  /* Texto principal */
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-carbon text-ice antialiased selection:bg-forest selection:text-ice;
+    scroll-behavior: smooth;
+  }
+}
