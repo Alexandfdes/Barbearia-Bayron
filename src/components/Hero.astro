@@ -1,101 +1,69 @@
 ---
-import { TOPSALAO_URL } from '../config';
+import { TOPSALAO_URL } from "../config";
 ---
 
 <section
   id="hero"
-  class="relative min-h-[85vh] md:min-h-screen flex items-center justify-center overflow-hidden"
+  class="relative h-[100dvh] min-h-screen flex items-end overflow-hidden"
 >
-  <!-- Premium Abstract Background -->
-  <div class="absolute inset-0 bg-carbon overflow-hidden pointer-events-none">
-    <!-- Grid Texturizado (Sutil) -->
+  <!-- Background image -->
+  <div class="absolute inset-0 z-0">
+    <img
+      src="/fotos-videos/foto-inicial2.jpg"
+      alt="Barbearia Bayron"
+      class="w-full h-full object-cover object-[center_20%]"
+    />
+    <!-- Gradient overlay: darker at bottom for text, lighter at top to show the photo -->
     <div
-      class="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-size-[48px_48px]"
-    >
-    </div>
-
-    <!-- Spotlight Verde (Branding) -->
-    <div
-      class="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[80vw] max-w-[800px] h-[500px] bg-bayron-green/40 blur-[90px] rounded-full opacity-80 animate-pulse-slow"
-    >
-    </div>
-
-    <!-- Brilho secundário de fundo -->
-    <div
-      class="absolute bottom-[-10%] right-0 w-[500px] h-[500px] bg-bayron-hover/30 blur-[100px] rounded-full opacity-60"
-    >
-    </div>
-
-    <!-- Vignette para escurecer bordas e focar o centro -->
-    <div
-      class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,#09090b_100%)]"
+      class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/10"
     >
     </div>
   </div>
 
-  <div class="relative z-10 max-w-4xl mx-auto px-4 text-center">
-
+  <!-- Content anchored to bottom-left -->
+  <div class="relative z-10 max-w-6xl mx-auto px-6 pb-16 md:pb-24 w-full">
+    <p
+      class="text-sm md:text-base text-neutral-400 uppercase tracking-[0.3em] font-medium mb-4"
+    >
+      Barbearia Bayron — Mossoró/RN
+    </p>
 
     <h1
-      class="text-4xl sm:text-5xl md:text-7xl font-black tracking-tight leading-[1.1] mb-6 drop-shadow-lg"
+      class="font-serif text-4xl sm:text-5xl md:text-6xl font-medium leading-[1.12] text-white max-w-2xl mb-6"
     >
-      Onde cada corte é<br class="hidden sm:block" /> uma questão de
-      <span
-        class="text-transparent bg-clip-text bg-linear-to-r from-bayron-green to-teal-400"
-        >respeito</span
-      >
-      e
-      <span
-        class="text-transparent bg-clip-text bg-linear-to-r from-bayron-green to-teal-400"
-        >precisão.</span
-      >
+      Estilo com
+      <span class="italic text-teal-light">respeito.</span><br />
+      Corte com
+      <span class="italic text-teal-light">precisão.</span>
     </h1>
 
     <p
-      class="text-lg md:text-xl text-zinc-300 max-w-2xl mx-auto mb-10 drop-shadow-md"
+      class="font-sans text-base text-neutral-300 max-w-md mb-10 leading-relaxed"
     >
-      Cortes personalizados com técnicas de visagismo — valorizando o formato do
-      seu rosto, seu estilo e sua identidade.
+      Visagismo personalizado que valoriza o formato do seu rosto, seu estilo e
+      sua identidade.
     </p>
 
-    <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-      <a
-        href={TOPSALAO_URL}
-        target="_blank"
-        rel="noopener"
-        id="hero-cta-agendar"
-        class="w-full sm:w-auto bg-bayron-green hover:bg-bayron-hover text-white text-lg font-bold px-8 py-4 rounded-xl transition-colors duration-200 shadow-lg shadow-bayron-green/20"
+    <a
+      href={TOPSALAO_URL}
+      target="_blank"
+      rel="noopener"
+      id="hero-cta"
+      class="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white text-sm font-medium uppercase tracking-widest px-8 py-4 rounded-sm transition-all duration-300"
+    >
+      Reservar Horário
+      <svg
+        class="w-4 h-4"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        stroke-width="2"
       >
-        AGENDAR MEU HORÁRIO
-      </a>
-      <a
-        href="#servicos"
-        id="hero-cta-servicos"
-        class="w-full sm:w-auto border border-white/15 hover:border-white/30 text-zinc-300 hover:text-ice text-lg font-medium px-8 py-4 rounded-xl transition-colors duration-200 backdrop-blur-sm"
-      >
-        Ver Serviços ↓
-      </a>
-    </div>
-  </div>
-
-  <div
-    class="absolute bottom-0 left-0 right-0 h-32 bg-linear-to-t from-carbon to-transparent pointer-events-none"
-  >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+      </svg>
+    </a>
   </div>
 </section>
-
-<style>
-  .animate-pulse-slow {
-    animation: pulse-slow 8s ease-in-out infinite alternate;
-  }
-  @keyframes pulse-slow {
-    0% {
-      opacity: 0.3;
-      transform: translateX(-50%) scale(0.95);
-    }
-    100% {
-      opacity: 0.7;
-      transform: translateX(-50%) scale(1.05);
-    }
-  }
-</style>

@@ -25,13 +25,14 @@ const photos = [
 ];
 ---
 
-<section id="galeria" class="py-20 md:py-28 overflow-hidden">
+<section id="galeria" class="py-20 md:py-28 overflow-hidden bg-dark-alt">
   <div class="max-w-6xl mx-auto px-4">
     <!-- Header -->
     <div class="text-center mb-16">
-      <span class="text-bayron-green text-sm font-semibold tracking-widest uppercase">Portfólio</span>
-      <h2 class="text-3xl md:text-5xl font-black mt-2 mb-4">Transformações que Inspiram</h2>
-      <p class="text-zinc-400 max-w-lg mx-auto">Cada corte é pensado para valorizar seu estilo. Confira alguns dos nossos trabalhos.</p>
+      <div class="w-10 h-px bg-teal mx-auto mb-6"></div>
+      <span class="text-teal-light text-sm font-medium tracking-[0.25em] uppercase">Portfólio</span>
+      <h2 class="font-serif text-3xl md:text-5xl font-medium mt-3 mb-4 text-neutral-50">Transformações que Inspiram</h2>
+      <p class="text-neutral-400 max-w-lg mx-auto">Cada corte é pensado para valorizar seu estilo. Confira alguns dos nossos trabalhos.</p>
     </div>
   </div>
 
@@ -44,7 +45,7 @@ const photos = [
     >
       {[...photos, ...photos].map((photo) => (
         <div class="flex-none w-[280px] md:w-[320px] group">
-          <div class="relative overflow-hidden rounded-2xl aspect-3/4 shadow-lg shadow-black/20">
+          <div class="relative overflow-hidden rounded-md aspect-3/4">
             <img
               src={photo.src}
               alt={photo.alt}
@@ -52,8 +53,8 @@ const photos = [
               class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
             />
             <!-- Hover overlay -->
-            <div class="absolute inset-0 bg-linear-to-t from-carbon/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-5">
-              <span class="text-sm text-ice font-medium">{photo.alt}</span>
+            <div class="absolute inset-0 bg-gradient-to-t from-dark/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-5">
+              <span class="text-sm text-neutral-200 font-medium">{photo.alt}</span>
             </div>
           </div>
         </div>
@@ -61,12 +62,11 @@ const photos = [
     </div>
 
     <!-- Scroll hint gradient edges -->
-    <div class="hidden md:block absolute left-0 top-0 bottom-4 w-16 bg-linear-to-r from-carbon to-transparent pointer-events-none z-10"></div>
-    <div class="hidden md:block absolute right-0 top-0 bottom-4 w-16 bg-linear-to-l from-carbon to-transparent pointer-events-none z-10"></div>
+    <div class="hidden md:block absolute left-0 top-0 bottom-4 w-16 bg-gradient-to-r from-dark-alt to-transparent pointer-events-none z-10"></div>
+    <div class="hidden md:block absolute right-0 top-0 bottom-4 w-16 bg-gradient-to-l from-dark-alt to-transparent pointer-events-none z-10"></div>
   </div>
 
   <div class="max-w-6xl mx-auto px-4">
-
     <!-- Instagram CTA -->
     <div class="text-center">
       <a
@@ -74,9 +74,9 @@ const photos = [
         target="_blank"
         rel="noopener"
         id="galeria-cta-instagram"
-        class="inline-flex items-center gap-3 border border-white/10 hover:border-bayron-green/40 text-zinc-300 hover:text-ice font-semibold px-8 py-4 rounded-xl transition-all duration-200 group"
+        class="inline-flex items-center gap-3 border border-white/10 hover:border-teal/40 text-neutral-400 hover:text-white font-medium uppercase tracking-widest px-8 py-4 rounded-md transition-all duration-300 group"
       >
-        <svg class="w-5 h-5 text-bayron-green" viewBox="0 0 24 24" fill="currentColor">
+        <svg class="w-5 h-5 text-teal-light" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/>
         </svg>
         Ver mais no Instagram
@@ -106,9 +106,8 @@ const photos = [
     const originalCount = parseInt(carousel.getAttribute("data-count") || "20", 10);
     let paused = false;
     let currentScroll = 0;
-    const SCROLL_SPEED = 0.8; // px por frame (aumente para mais rápido, diminua para mais lento)
+    const SCROLL_SPEED = 0.8;
 
-    // Sincroniza o scroll interno se o usuário rolar manualmente
     carousel.addEventListener("scroll", () => {
       if (paused) {
         currentScroll = carousel.scrollLeft;
@@ -119,33 +118,28 @@ const photos = [
       if (!carousel) return;
       if (!paused) {
         currentScroll += SCROLL_SPEED;
-        
+
         const card = carousel.querySelector<HTMLElement>(":scope > div");
         if (card) {
-          // Largura de 1 set original (card + 16px do gap-4)
           const singleSetWidth = (card.offsetWidth + 16) * originalCount;
-          
-          // Se passou do primeiro set inteiro, volta invisivelmente
+
           if (currentScroll >= singleSetWidth) {
             currentScroll -= singleSetWidth;
           }
         }
-        
+
         carousel.scrollLeft = currentScroll;
       }
       requestAnimationFrame(scroll);
     }
 
-    // Pausa ao clicar e segurar (desktop)
     carousel.addEventListener("mousedown", () => { paused = true; });
     carousel.addEventListener("mouseup", () => { paused = false; });
     carousel.addEventListener("mouseleave", () => { paused = false; });
 
-    // Pausa no toque (mobile)
     carousel.addEventListener("touchstart", () => { paused = true; }, { passive: true });
     carousel.addEventListener("touchend", () => { paused = false; }, { passive: true });
 
-    // Inicia a animação
     requestAnimationFrame(scroll);
   });
 </script>

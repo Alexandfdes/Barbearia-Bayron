@@ -1,66 +1,119 @@
 ---
 import { TOPSALAO_URL } from '../config';
 
-const services = [
-  { name: "Degradê", price: "R$ 45", desc: "Corte preciso com acabamento na régua" },
-  { name: "Social", price: "R$ 40", desc: "Corte clássico com tesoura e máquina" },
-  { name: "Barba", price: "R$ 30", desc: "Alinhamento e modelagem na navalha" },
+const categories = [
+  {
+    title: "Cortes Individuais",
+    items: [
+      { name: "Corte Social", price: "R$ 40", desc: "c/ cortesia: sobrancelhas e limpeza" },
+      { name: "Corte Degradê", price: "R$ 45", desc: "c/ cortesia: sobrancelhas e limpeza" },
+      { name: "Corte Navalhado", price: "R$ 45", desc: "c/ cortesia: sobrancelhas e limpeza" },
+      { name: "Só Tesoura", price: "R$ 40", desc: "c/ cortesia: sobrancelhas" },
+      { name: "1º Corte Baby", price: "R$ 40", desc: "Ganha certificado especial" },
+    ]
+  },
+  {
+    title: "Barba Individual",
+    items: [
+      { name: "Barba Simples", price: "R$ 30", desc: "Alinhamento e modelagem" },
+      { name: "Barba e Pezinho", price: "R$ 35", desc: "c/ cortesia: sobrancelhas" },
+      { name: "Barba + Pigmentação", price: "R$ 45", desc: "Cobertura de falhas e fios brancos" },
+    ]
+  },
+  {
+    title: "Adicionais",
+    items: [
+      { name: "Alisamento", price: "R$ 70", desc: "Redução de volume e alinhamento" },
+      { name: "Degradê + Alisamento", price: "R$ 100", desc: "c/ cortesia: sobrancelhas" },
+      { name: "Degradê, Barba e Alis.", price: "R$ 130", desc: "c/ cortesia: sobrancelhas" },
+      { name: "Hidratação", price: "R$ 15", desc: "Reposição de nutrientes" },
+      { name: "Limpeza contra caspa", price: "R$ 10", desc: "Tratamento do couro cabeludo" },
+      { name: "Depilação Nasal", price: "R$ 10", desc: "Com cera quente" },
+      { name: "Sobrancelha Navalha", price: "R$ 10", desc: "Alinhamento perfeito" },
+    ]
+  }
 ];
 
 const combos = [
-  { name: "Degradê + Barba", price: "R$ 65", desc: "O clássico completo", highlight: true },
+  { name: "Navalhado + Barba", price: "R$ 65", desc: "c/ cortesia: sobrancelhas e limpeza" },
+  { name: "Social + Barba", price: "R$ 60", desc: "c/ cortesia: sobrancelhas e limpeza" },
+  { name: "Degradê + Barba", price: "R$ 65", desc: "c/ cortesia: sobrancelhas e limpeza" },
+  { name: "Degradê + Barba + Hidratação", price: "R$ 75", desc: "c/ cortesia: sobrancelhas" },
+  { name: "Navalhado + Pigmentação", price: "R$ 60", desc: "c/ cortesia: sobrancelhas" },
 ];
 ---
 
-<section id="servicos" class="py-20 md:py-28">
-  <div class="max-w-6xl mx-auto px-4">
+<section id="servicos" class="py-20 md:py-28 relative">
+  <div class="max-w-7xl mx-auto px-4 relative z-10">
     <div class="text-center mb-16">
-      <span class="text-bayron-green text-sm font-semibold tracking-widest uppercase">Catálogo</span>
-      <h2 class="text-3xl md:text-5xl font-black mt-2 mb-4">Nossos Serviços</h2>
-      <p class="text-zinc-400 max-w-lg mx-auto">Cada serviço executado com técnica e atenção aos detalhes.</p>
+      <div class="w-10 h-px bg-teal mx-auto mb-6"></div>
+      <span class="text-teal-light text-sm font-medium tracking-[0.25em] uppercase">Catálogo Completo</span>
+      <h2 class="font-serif text-3xl md:text-5xl font-medium mt-3 mb-4 text-neutral-50">Nossos Serviços</h2>
+      <p class="text-neutral-400 max-w-lg mx-auto">Tabela completa de serviços executados com técnica e atenção aos detalhes.</p>
     </div>
 
-    <!-- Individual services grid -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-12">
-      {services.map((s) => (
-        <div class="group bg-zinc-900 border border-white/5 hover:border-forest-light/30 rounded-xl p-6 transition-colors duration-200">
-          <div class="flex items-start justify-between mb-2">
-            <h3 class="text-lg font-bold">{s.name}</h3>
-            <span class="text-bayron-green font-bold text-lg">{s.price}</span>
+    <!-- Categorias Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-8 lg:gap-12 mb-20">
+      {categories.map(category => (
+        <div>
+          <h3 class="font-serif text-xl font-medium mb-6 text-neutral-50 flex items-center gap-3">
+            <span class="w-8 h-px bg-teal"></span>
+            {category.title}
+          </h3>
+          <div class="space-y-3">
+            {category.items.map(s => (
+              <div class="group bg-dark-card border border-white/5 hover:border-teal/30 rounded-md p-5 transition-colors duration-300">
+                <div class="flex items-start justify-between mb-1">
+                  <h4 class="text-base font-medium text-neutral-200">{s.name}</h4>
+                  <span class="text-teal-light font-semibold whitespace-nowrap ml-4">{s.price}</span>
+                </div>
+                {s.desc && <p class="text-xs text-neutral-500">{s.desc}</p>}
+              </div>
+            ))}
           </div>
-          <p class="text-sm text-zinc-400">{s.desc}</p>
         </div>
       ))}
     </div>
 
-    <!-- Combo -->
-    <div class="max-w-md mx-auto">
-      {combos.map((c) => (
-        <a
-          href={TOPSALAO_URL}
-          target="_blank"
-          rel="noopener"
-          class="group block bg-forest/10 border border-forest-light/40 hover:border-bayron-green/60 rounded-xl p-6 transition-all duration-200 text-center"
-        >
-          <span class="inline-block bg-bayron-green text-white text-[10px] font-black px-2.5 py-0.5 rounded-full mb-3 uppercase tracking-wider">
-            Popular
+    <!-- Combos Prontos -->
+    <div class="mt-20">
+      <div class="text-center mb-10">
+        <h3 class="font-serif text-2xl md:text-4xl font-medium text-neutral-50 inline-flex items-center gap-3 justify-center">
+          Combos Prontos
+          <span class="bg-teal text-white text-xs font-bold px-3 py-1 rounded-sm uppercase tracking-widest">
+            Populares
           </span>
-          <h4 class="text-xl font-bold mb-1">{c.name}</h4>
-          <p class="text-sm text-zinc-400 mb-3">{c.desc}</p>
-          <span class="text-3xl font-black text-bayron-green">{c.price}</span>
-        </a>
-      ))}
+        </h3>
+        <p class="text-sm text-neutral-400 mt-3">Serviços de Cabelo e Barba Juntos</p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 justify-center">
+        {combos.map(c => (
+          <a
+            href={TOPSALAO_URL}
+            target="_blank"
+            rel="noopener"
+            class="group block bg-dark-card border border-white/5 hover:border-teal/30 rounded-md p-6 transition-all duration-300"
+          >
+            <div class="flex justify-between items-start mb-2">
+              <h4 class="text-lg font-medium text-neutral-200 leading-tight pr-4">{c.name}</h4>
+              <span class="text-xl font-semibold text-teal-light whitespace-nowrap">{c.price}</span>
+            </div>
+            <p class="text-xs text-neutral-500">{c.desc}</p>
+          </a>
+        ))}
+      </div>
     </div>
 
-    <div class="text-center mt-10">
+    <div class="text-center mt-16">
       <a
         href={TOPSALAO_URL}
         target="_blank"
         rel="noopener"
         id="servicos-cta"
-        class="inline-flex items-center gap-2 bg-bayron-green hover:bg-bayron-hover text-white font-bold px-8 py-4 rounded-xl transition-colors duration-200 shadow-lg shadow-bayron-green/20"
+        class="inline-flex items-center justify-center gap-3 bg-teal hover:bg-teal-hover text-white font-bold tracking-widest uppercase px-10 py-4 rounded-md transition-colors duration-300 w-full sm:w-auto"
       >
-        AGENDAR AGORA
+        Agendar no TopSalão
         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
         </svg>
