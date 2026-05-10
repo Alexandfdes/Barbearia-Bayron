@@ -9,27 +9,23 @@ import { TOPSALAO_URL } from "../config";
   <!-- Background image -->
   <div class="absolute inset-0 z-0">
     <img
-      src="/fotos-videos/foto-inicial2.jpg"
+      src="/fotos-videos/foto-inicial6.png"
       alt="Barbearia Bayron"
       class="w-full h-full object-cover object-[center_20%]"
     />
-    <!-- Gradient overlay: darker at bottom for text, lighter at top to show the photo -->
+    <!-- Gradient: stronger on left side where text sits -->
     <div
-      class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/10"
+      class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/10"
     >
+    </div>
+    <div class="absolute inset-0 bg-gradient-to-r from-black/50 to-transparent">
     </div>
   </div>
 
-  <!-- Content anchored to bottom-left -->
-  <div class="relative z-10 max-w-6xl mx-auto px-6 pb-16 md:pb-24 w-full">
-    <p
-      class="text-sm md:text-base text-neutral-400 uppercase tracking-[0.3em] font-medium mb-4"
-    >
-      Barbearia Bayron — Mossoró/RN
-    </p>
-
+  <!-- Content anchored to bottom-left, pushed further left -->
+  <div class="relative z-10 w-full px-10 md:px-20 pb-20 md:pb-60 max-w-4xl">
     <h1
-      class="font-serif text-4xl sm:text-5xl md:text-6xl font-medium leading-[1.12] text-white max-w-2xl mb-6"
+      class="font-serif text-3xl sm:text-4xl md:text-6xl font-medium leading-[1.12] text-white mb-5"
     >
       Estilo com
       <span class="italic text-teal-light">respeito.</span><br />
@@ -38,7 +34,7 @@ import { TOPSALAO_URL } from "../config";
     </h1>
 
     <p
-      class="font-sans text-base text-neutral-300 max-w-md mb-10 leading-relaxed"
+      class="font-sans text-base md:text-lg text-neutral-300 max-w-lg mb-9 leading-relaxed"
     >
       Visagismo personalizado que valoriza o formato do seu rosto, seu estilo e
       sua identidade.
@@ -49,7 +45,7 @@ import { TOPSALAO_URL } from "../config";
       target="_blank"
       rel="noopener"
       id="hero-cta"
-      class="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white text-sm font-medium uppercase tracking-widest px-8 py-4 rounded-sm transition-all duration-300"
+      class="inline-flex items-center gap-3 bg-[#0f766e] hover:bg-[#0d9488] text-white text-sm font-bold uppercase tracking-widest px-10 py-4 rounded-sm transition-colors duration-300"
     >
       Reservar Horário
       <svg
