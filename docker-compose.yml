@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  portfolio:
+    build: .
+    container_name: astro_portfolio
+    restart: always
+    # Expomos a porta 80 apenas para a rede interna do Docker
+    expose:
+      - "80"
+    networks:
+      - proxy_network
+
+networks:
+  proxy_network:
+    external: true

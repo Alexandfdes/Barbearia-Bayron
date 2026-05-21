@@ -20,7 +20,7 @@ const photos = Object.entries(rawModules)
   }));
 ---
 
-<section id="galeria" class="py-20 md:py-28 overflow-hidden bg-dark-alt">
+<section id="galeria" class="py-12 md:py-20 overflow-hidden bg-dark-alt">
   <div class="max-w-6xl mx-auto px-4">
     <!-- Header -->
     <div class="text-center mb-16">
@@ -47,7 +47,7 @@ const photos = Object.entries(rawModules)
               loading="lazy"
               widths={[280, 320, 560, 640]}
               sizes="(max-width: 768px) 280px, 320px"
-              class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+              class="w-full h-full object-cover md:transition-transform md:duration-700 md:group-hover:scale-105"
             />
             <!-- Hover overlay -->
             <div class="absolute inset-0 bg-gradient-to-t from-dark/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-5">
@@ -122,19 +122,39 @@ const photos = Object.entries(rawModules)
 
     const originalCount = parseInt(carousel.getAttribute("data-count") || "20", 10);
     let paused = false;
+    let touching = false;
+    let userInteracted = false; // true entre touchstart e fim da inercia
+    let isProgrammaticScroll = false; // true durante o auto-scroll setando scrollLeft
+    let scrollIdleTimer: number | undefined;
     let currentScroll = 0;
     const SCROLL_SPEED = 0.8;
     const ARROW_STEP = 336; // card width (320) + gap (16)
+    const SCROLL_IDLE_DELAY = 200; // ms sem scroll do usuario = inercia parou
+
+    function isPaused() {
+      return paused || touching || userInteracted;
+    }
 
     carousel.addEventListener("scroll", () => {
-      if (paused) {
-        currentScroll = carousel.scrollLeft;
-      }
+      // Ignora scrolls disparados pela propria animacao
+      if (isProgrammaticScroll) return;
+
+      // Scroll causado pelo usuario (drag direto ou inercia pos-touchend)
+      currentScroll = carousel.scrollLeft;
+
+      if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = window.setTimeout(() => {
+        // Scroll parou: encerra o "userInteracted" e deixa o auto-scroll voltar
+        if (!touching) {
+          userInteracted = false;
+          currentScroll = carousel.scrollLeft;
+        }
+      }, SCROLL_IDLE_DELAY);
     }, { passive: true });
 
     function scroll() {
       if (!carousel) return;
-      if (!paused) {
+      if (!isPaused()) {
         currentScroll += SCROLL_SPEED;
 
         const card = carousel.querySelector<HTMLElement>(":scope > div");
@@ -145,7 +165,10 @@ const photos = Object.entries(rawModules)
           }
         }
 
+        isProgrammaticScroll = true;
         carousel.scrollLeft = currentScroll;
+        // Reseta a flag no proximo frame (depois do scroll event ja ter disparado)
+        requestAnimationFrame(() => { isProgrammaticScroll = false; });
       }
       requestAnimationFrame(scroll);
     }
@@ -153,8 +176,18 @@ const photos = Object.entries(rawModules)
     carousel.addEventListener("mousedown", () => { paused = true; });
     carousel.addEventListener("mouseup", () => { paused = false; });
     carousel.addEventListener("mouseleave", () => { paused = false; });
-    carousel.addEventListener("touchstart", () => { paused = true; }, { passive: true });
-    carousel.addEventListener("touchend", () => { paused = false; }, { passive: true });
+    carousel.addEventListener("touchstart", () => {
+      touching = true;
+      userInteracted = true;
+    }, { passive: true });
+    carousel.addEventListener("touchend", () => {
+      touching = false;
+      // userInteracted continua true ate o scroll de inercia parar
+    }, { passive: true });
+    carousel.addEventListener("touchcancel", () => {
+      touching = false;
+      userInteracted = false;
+    }, { passive: true });
 
     // Arrow navigation
     const prevBtn = document.getElementById("gallery-prev");

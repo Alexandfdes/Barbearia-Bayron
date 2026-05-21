@@ -35,15 +35,15 @@ const categories = [
 ];
 
 const combos = [
-  { name: "Navalhado + Barba", price: "R$ 65", desc: "c/ cortesia: sobrancelhas e limpeza" },
-  { name: "Social + Barba", price: "R$ 60", desc: "c/ cortesia: sobrancelhas e limpeza" },
-  { name: "Degradê + Barba", price: "R$ 65", desc: "c/ cortesia: sobrancelhas e limpeza" },
-  { name: "Degradê + Barba + Hidratação", price: "R$ 75", desc: "c/ cortesia: sobrancelhas" },
-  { name: "Navalhado + Pigmentação", price: "R$ 60", desc: "c/ cortesia: sobrancelhas" },
+  { name: "Navalhado + Barba", price: "R$ 65", originalPrice: "R$ 75", desc: "c/ cortesia: sobrancelhas e limpeza" },
+  { name: "Social + Barba", price: "R$ 60", originalPrice: "R$ 70", desc: "c/ cortesia: sobrancelhas e limpeza" },
+  { name: "Degradê + Barba", price: "R$ 65", originalPrice: "R$ 75", desc: "c/ cortesia: sobrancelhas e limpeza" },
+  { name: "Degradê + Barba + Hidratação", price: "R$ 75", originalPrice: "R$ 90", desc: "c/ cortesia: sobrancelhas" },
+  { name: "Navalhado + Pigmentação", price: "R$ 60", originalPrice: "R$ 90", desc: "c/ cortesia: sobrancelhas" },
 ];
 ---
 
-<section id="servicos" class="py-20 md:py-28 relative">
+<section id="servicos" class="py-12 md:py-20 relative">
   <div class="max-w-7xl mx-auto px-4 relative z-10">
     <div class="text-center mb-16">
       <div class="w-10 h-px bg-teal mx-auto mb-6"></div>
@@ -97,7 +97,10 @@ const combos = [
           >
             <div class="flex justify-between items-start mb-2">
               <h4 class="text-lg font-medium text-neutral-200 leading-tight pr-4">{c.name}</h4>
-              <span class="text-xl font-semibold text-teal-light whitespace-nowrap">{c.price}</span>
+              <div class="flex flex-col items-end shrink-0">
+                <span class="text-xs text-neutral-500 line-through">{c.originalPrice}</span>
+                <span class="text-xl font-semibold text-teal-light whitespace-nowrap">{c.price}</span>
+              </div>
             </div>
             <p class="text-xs text-neutral-500">{c.desc}</p>
           </a>

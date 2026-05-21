@@ -4,14 +4,14 @@ import { Image } from "astro:assets";
 import comboImg from "../assets/fotos-videos/carrosel7.jpg";
 ---
 
-<section id="combo" class="py-20 md:py-28 relative">
+<section id="combo" class="py-12 md:py-20 relative">
   <div class="relative z-10 max-w-6xl mx-auto px-4">
     <div
       class="rounded-lg overflow-hidden border border-teal/20 bg-gradient-to-br from-neutral-900 via-neutral-950 to-neutral-900"
     >
       <div class="grid md:grid-cols-2">
-        <!-- Left: Info -->
-        <div class="p-8 md:p-14 flex flex-col justify-center">
+        <!-- Right: Info -->
+        <div class="p-8 md:p-14 flex flex-col justify-center md:order-2">
           <div class="flex flex-wrap items-center gap-4 mb-2">
             <span
               class="text-teal-light text-xs font-medium tracking-[0.25em] uppercase"
@@ -87,18 +87,18 @@ import comboImg from "../assets/fotos-videos/carrosel7.jpg";
           </a>
         </div>
 
-        <!-- Right: Photo -->
-        <div class="relative min-h-[300px] md:min-h-full">
+        <!-- Left: Photo (hidden on mobile) -->
+        <div class="hidden md:block relative md:min-h-full md:order-1">
           <Image
             src={comboImg}
             alt="Resultado do Combo Boris — Corte e Barba"
-            class="w-full h-full object-cover"
+            class="w-full h-full object-cover object-[center_35%] md:object-center"
             loading="lazy"
             widths={[600, 800, 1200]}
             sizes="(max-width: 768px) 100vw, 50vw"
           />
           <div
-            class="hidden md:block absolute inset-0 bg-gradient-to-r from-neutral-950/40 to-transparent"
+            class="hidden md:block absolute inset-0 bg-gradient-to-l from-neutral-950/40 to-transparent"
           >
           </div>
           <div

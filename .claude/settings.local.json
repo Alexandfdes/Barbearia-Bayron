@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /c/DEV/barbearia/.claude)",
+      "Bash(npx playwright *)"
+    ]
+  }
+}
