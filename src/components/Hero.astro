@@ -1,23 +1,30 @@
 ---
 import { TOPSALAO_URL } from "../config";
+import { Image } from "astro:assets";
+import heroImg from "../assets/fotos-videos/foto-inicial5.png";
 ---
 
 <section
   id="hero"
-  class="relative min-h-[100svh] flex items-end lg:items-center overflow-hidden pt-24 pb-16 sm:pb-20 lg:py-24"
+  class="relative min-h-[100svh] flex items-end lg:items-center overflow-hidden pt-24 pb-28 sm:pb-32 lg:py-24"
 >
   <!-- Background image -->
   <div class="absolute inset-0 z-0">
-    <img
-      src="/fotos-videos/foto-inicial7.jpg"
+    <Image
+      src={heroImg}
       alt="Barbearia Bayron"
-      class="w-full h-full object-cover object-[70%_30%]"
+      class="w-full h-full object-cover object-[center_20%] lg:object-[70%_30%]"
+      loading="eager"
+      fetchpriority="high"
+      widths={[640, 1280, 1920]}
+      sizes="100vw"
     />
-    <!-- Gradient: stronger on left side where text sits -->
+    <!-- Gradiente inferior: mais denso no mobile para cobrir a roupa -->
     <div
-      class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/10"
+      class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/60 lg:via-black/40 to-black/10 lg:to-black/10"
     >
     </div>
+    <!-- Gradiente lateral esquerdo (desktop) -->
     <div
       class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/30 to-transparent"
     >
@@ -25,7 +32,7 @@ import { TOPSALAO_URL } from "../config";
   </div>
 
   <!-- Content -->
-  <div class="relative z-10 w-full px-6 sm:px-10 md:px-20 max-w-4xl">
+  <div class="relative z-10 w-full px-6 sm:px-10 md:px-20 max-w-4xl flex flex-col items-center text-center lg:items-start lg:text-left">
     <h1
       class="font-serif text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-medium leading-tight text-white mb-2"
     >
@@ -47,7 +54,7 @@ import { TOPSALAO_URL } from "../config";
       target="_blank"
       rel="noopener"
       id="hero-cta"
-      class="inline-flex items-center gap-3 bg-[#0f766e] hover:bg-[#0d9488] text-white text-sm font-bold uppercase tracking-widest px-10 py-4 rounded-sm transition-colors duration-300"
+      class="inline-flex items-center gap-3 bg-[#0f766e] hover:bg-[#0d9488] text-white font-bold uppercase tracking-widest rounded-sm transition-colors duration-300 px-6 py-3 text-xs lg:px-10 lg:py-4 lg:text-sm"
     >
       Reservar Horário
       <svg
@@ -56,6 +63,7 @@ import { TOPSALAO_URL } from "../config";
         viewBox="0 0 24 24"
         stroke="currentColor"
         stroke-width="2"
+        aria-hidden="true"
       >
         <path
           stroke-linecap="round"

@@ -1,9 +1,7 @@
 ---
-import { getWhatsAppUrl } from "../config";
 import { TOPSALAO_URL } from "../config";
-const whatsappUrl = getWhatsAppUrl(
-  "Olá! Quero agendar o Combo Boris (Cabelo + Barba + Produto com 10% OFF).",
-);
+import { Image } from "astro:assets";
+import comboImg from "../assets/fotos-videos/carrosel7.jpg";
 ---
 
 <section id="combo" class="py-20 md:py-28 relative">
@@ -51,6 +49,7 @@ const whatsappUrl = getWhatsAppUrl(
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                     stroke-width="2.5"
+                    aria-hidden="true"
                   >
                     <path
                       stroke-linecap="round"
@@ -78,6 +77,7 @@ const whatsappUrl = getWhatsAppUrl(
               viewBox="0 0 24 24"
               stroke="currentColor"
               stroke-width="2"
+              aria-hidden="true"
             >
               <path
                 stroke-linecap="round"
@@ -89,18 +89,18 @@ const whatsappUrl = getWhatsAppUrl(
 
         <!-- Right: Photo -->
         <div class="relative min-h-[300px] md:min-h-full">
-          <img
-            src="/fotos-videos/carrosel7.jpg"
+          <Image
+            src={comboImg}
             alt="Resultado do Combo Boris — Corte e Barba"
             class="w-full h-full object-cover"
             loading="lazy"
+            widths={[600, 800, 1200]}
+            sizes="(max-width: 768px) 100vw, 50vw"
           />
-          <!-- Subtle gradient to blend with left column -->
           <div
             class="hidden md:block absolute inset-0 bg-gradient-to-r from-neutral-950/40 to-transparent"
           >
           </div>
-          <!-- Badge -->
           <div
             class="absolute top-4 right-4 bg-teal text-white text-xs font-bold px-3 py-1.5 rounded-sm uppercase tracking-widest shadow-lg"
           >

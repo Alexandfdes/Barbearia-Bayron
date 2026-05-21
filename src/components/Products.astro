@@ -1,26 +1,39 @@
 ---
+import { Image } from "astro:assets";
 import { getWhatsAppUrl } from '../config';
+import oleoImg from "../assets/products/oleo-mentolado6.jpeg";
+import balmImg from "../assets/products/balm-classic4.jpeg";
+import tonicoImg from "../assets/products/tonico4.jpeg";
+import type { ImageMetadata } from "astro";
 
-const products = [
+interface Product {
+  name: string;
+  price: string;
+  desc: string;
+  img: ImageMetadata;
+  msg: string;
+}
+
+const products: Product[] = [
   {
     name: "Óleo Mentolado Boris",
     price: "R$ 45",
     desc: "Garante brilho e proteção todos os dias. Nutre, hidrata e protege cada fio da sua barba.",
-    img: "/products/oleo-mentolado6.jpeg",
+    img: oleoImg,
     msg: "Olá! Quero saber mais sobre o Óleo Mentolado Boris."
   },
   {
     name: "Balm Classic Boris",
     price: "R$ 49",
     desc: "Fórmula rica em ativos hidratantes. Reduz oleosidade, acalma a pele e mantém a barba alinhada.",
-    img: "/products/balm-classic4.jpeg",
+    img: balmImg,
     msg: "Olá! Quero saber mais sobre o Balm Classic Boris."
   },
   {
     name: "Tônico Boris",
     price: "R$ 89",
     desc: "Desenvolvido para falhas na barba e calvície. Estimula o crescimento e dá volume aos fios.",
-    img: "/products/tonico4.jpeg",
+    img: tonicoImg,
     msg: "Olá! Quero saber mais sobre o Tônico Boris."
   },
 ];
@@ -42,11 +55,13 @@ const products = [
           <div class="bg-dark-card border border-white/5 hover:border-teal/20 rounded-md overflow-hidden flex flex-col transition-colors duration-300 group">
             <!-- Product image -->
             <div class="relative aspect-square overflow-hidden">
-              <img
+              <Image
                 src={p.img}
                 alt={p.name}
                 class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                 loading="lazy"
+                widths={[400, 800]}
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               />
             </div>
             <!-- Info -->
@@ -62,7 +77,7 @@ const products = [
                   class="inline-flex items-center gap-2 text-sm font-medium text-neutral-300 hover:text-white border border-white/10 hover:border-teal/30 px-4 py-2.5 rounded-sm transition-all duration-300 uppercase tracking-wider"
                 >
                   Saiba Mais
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
                   </svg>
                 </a>

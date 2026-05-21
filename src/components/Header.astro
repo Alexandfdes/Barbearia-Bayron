@@ -1,16 +1,19 @@
 ---
 import { TOPSALAO_URL } from '../config';
+import { Image } from 'astro:assets';
+import logoSrc from '../assets/Logo-Bayron3.png';
 ---
 
 <header
   id="header"
-  class="fixed top-0 left-0 right-0 z-50"
+  class="fixed top-0 left-0 right-0 z-50 transition-colors duration-300"
 >
   <div class="w-full px-6 md:px-10 h-16 flex items-center justify-between">
     <a href="/" class="flex items-center gap-3 relative z-50">
-      <img
-        src="/Logo-Bayron3.png"
+      <Image
+        src={logoSrc}
         alt="Barbearia Bayron"
+        width={80}
         class="w-10 h-10 rounded-sm object-contain"
       />
       <span class="text-base font-semibold tracking-[0.2em] text-white uppercase">Bayron</span>
@@ -21,6 +24,8 @@ import { TOPSALAO_URL } from '../config';
       <a href="#servicos" class="hover:text-white transition-colors duration-300">Serviços</a>
       <a href="#combo" class="hover:text-white transition-colors duration-300">Combos</a>
       <a href="#produtos" class="hover:text-white transition-colors duration-300">Produtos</a>
+      <a href="#depoimentos" class="hover:text-white transition-colors duration-300">Depoimentos</a>
+      <a href="#faq" class="hover:text-white transition-colors duration-300">FAQ</a>
       <a href="#contato" class="hover:text-white transition-colors duration-300">Contato</a>
     </nav>
 
@@ -60,6 +65,8 @@ import { TOPSALAO_URL } from '../config';
       <a href="#servicos" class="mobile-link hover:text-white transition-colors">Serviços</a>
       <a href="#combo" class="mobile-link hover:text-white transition-colors">Combos</a>
       <a href="#produtos" class="mobile-link hover:text-white transition-colors">Produtos</a>
+      <a href="#depoimentos" class="mobile-link hover:text-white transition-colors">Depoimentos</a>
+      <a href="#faq" class="mobile-link hover:text-white transition-colors">FAQ</a>
       <a href="#contato" class="mobile-link hover:text-white transition-colors">Contato</a>
       <a
         href={TOPSALAO_URL}
@@ -75,6 +82,20 @@ import { TOPSALAO_URL } from '../config';
 
 <script>
   document.addEventListener('DOMContentLoaded', () => {
+    const header = document.getElementById('header');
+    const hero = document.getElementById('hero');
+
+    if (header) {
+      function updateHeaderBg() {
+        const threshold = (hero?.offsetHeight ?? 400) - 80;
+        const past = window.scrollY > threshold;
+        header!.classList.toggle('bg-black/80', past);
+        header!.classList.toggle('backdrop-blur-md', past);
+      }
+      window.addEventListener('scroll', updateHeaderBg, { passive: true });
+      updateHeaderBg();
+    }
+
     const btn = document.getElementById('mobile-menu-btn');
     const menu = document.getElementById('mobile-menu');
     const iconMenu = document.getElementById('icon-menu');
@@ -102,7 +123,6 @@ import { TOPSALAO_URL } from '../config';
 
     btn.addEventListener('click', toggleMenu);
 
-    // Close menu when clicking a link
     links.forEach(link => {
       link.addEventListener('click', toggleMenu);
     });

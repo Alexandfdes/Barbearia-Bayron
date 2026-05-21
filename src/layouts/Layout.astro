@@ -27,8 +27,37 @@ const {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet" />
     <title>{title}</title>
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "HairSalon",
+      "name": "Barbearia Bayron",
+      "image": "https://barbeariabayron.com.br/og.jpg",
+      "url": "https://barbeariabayron.com.br",
+      "telephone": "+5584999051196",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "R. Jaen Menescal, 174",
+        "addressLocality": "Mossoró",
+        "addressRegion": "RN",
+        "addressCountry": "BR"
+      },
+      "openingHoursSpecification": [
+        {
+          "@type": "OpeningHoursSpecification",
+          "dayOfWeek": ["Monday","Tuesday","Wednesday","Thursday","Friday"],
+          "opens": "09:00",
+          "closes": "20:00"
+        },
+        {
+          "@type": "OpeningHoursSpecification",
+          "dayOfWeek": "Saturday",
+          "opens": "09:00",
+          "closes": "18:00"
+        }
+      ]
+    })} />
   </head>
-  <body class="font-sans pb-16 md:pb-0">
+  <body class="font-sans pb-24 md:pb-0">
     <slot />
   </body>
 </html>

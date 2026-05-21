@@ -1,43 +1,36 @@
-# Astro Starter Kit: Minimal
+# Barbearia Bayron — Site Oficial
 
-```sh
-npm create astro@latest -- --template minimal
-```
+Landing page da **Barbearia Bayron**, localizada em Mossoró/RN. Desenvolvida com Astro + Tailwind CSS v4.
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Stack
 
-## 🚀 Project Structure
+- [Astro 6](https://astro.build) — framework de site estático
+- [Tailwind CSS v4](https://tailwindcss.com) — estilização via plugin Vite
+- [Sharp](https://sharp.pixelplumbing.com) — otimização de imagens (WebP, srcset)
 
-Inside of your Astro project, you'll see the following folders and files:
+## Comandos
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
+| Comando           | Ação                                            |
+| :---------------- | :---------------------------------------------- |
+| `npm install`     | Instala dependências                            |
+| `npm run dev`     | Servidor de desenvolvimento em `localhost:4321` |
+| `npm run build`   | Build de produção em `./dist/`                  |
+| `npm run preview` | Preview do build localmente                     |
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+## Seções da Landing Page
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
+1. **Hero** — foto de destaque com CTA de agendamento
+2. **Galeria** — carrossel de fotos dos trabalhos
+3. **Combo do Dia** — promoção Cabelo + Barba + Produto Boris
+4. **Serviços** — tabela completa de preços
+5. **Produtos Boris** — linha exclusiva de cuidados para barba
+6. **Depoimentos** — avaliações de clientes com nota Google
+7. **FAQ** — perguntas frequentes em accordion
+8. **Contato/Rodapé** — endereço, horários e mapa
 
-Any static assets, like images, can be placed in the `public/` directory.
+## Contato
 
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+- **Endereço:** R. Jaen Menescal, 174 — Mossoró/RN
+- **WhatsApp:** +55 84 99905-1196
+- **Instagram:** [@barbearia_bayron](https://www.instagram.com/barbearia_bayron/)
+- **Agendamento:** [TopSalão](https://topsalao.com/app/index.html?tel=84999051196)

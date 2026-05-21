@@ -1,28 +1,23 @@
 ---
+import { Image } from "astro:assets";
 import { INSTAGRAM_URL } from '../config';
+import type { ImageMetadata } from "astro";
 
-const photos = [
-  { src: "/fotos-videos/carrosel1.jpg", alt: "Corte Barbearia Bayron 1" },
-  { src: "/fotos-videos/carrosel2.jpg", alt: "Corte Barbearia Bayron 2" },
-  { src: "/fotos-videos/carrosel3.jpg", alt: "Corte Barbearia Bayron 3" },
-  { src: "/fotos-videos/carrosel4.jpg", alt: "Corte Barbearia Bayron 4" },
-  { src: "/fotos-videos/carrosel5.jpg", alt: "Corte Barbearia Bayron 5" },
-  { src: "/fotos-videos/carrosel6.jpg", alt: "Corte Barbearia Bayron 6" },
-  { src: "/fotos-videos/carrosel7.jpg", alt: "Corte Barbearia Bayron 7" },
-  { src: "/fotos-videos/carrosel8.jpg", alt: "Corte Barbearia Bayron 8" },
-  { src: "/fotos-videos/carrosel9.jpg", alt: "Corte Barbearia Bayron 9" },
-  { src: "/fotos-videos/carrosel10.jpg", alt: "Corte Barbearia Bayron 10" },
-  { src: "/fotos-videos/carrosel11.jpg", alt: "Corte Barbearia Bayron 11" },
-  { src: "/fotos-videos/carrosel12.jpg", alt: "Corte Barbearia Bayron 12" },
-  { src: "/fotos-videos/carrosel13.jpg", alt: "Corte Barbearia Bayron 13" },
-  { src: "/fotos-videos/carrosel14.jpg", alt: "Corte Barbearia Bayron 14" },
-  { src: "/fotos-videos/carrosel15.jpg", alt: "Corte Barbearia Bayron 15" },
-  { src: "/fotos-videos/carrosel16.jpg", alt: "Corte Barbearia Bayron 16" },
-  { src: "/fotos-videos/carrosel17.jpg", alt: "Corte Barbearia Bayron 17" },
-  { src: "/fotos-videos/carrosel18.jpg", alt: "Corte Barbearia Bayron 18" },
-  { src: "/fotos-videos/carrosel19.jpg", alt: "Corte Barbearia Bayron 19" },
-  { src: "/fotos-videos/carrosel20.jpg", alt: "Corte Barbearia Bayron 20" },
-];
+const rawModules = import.meta.glob<{ default: ImageMetadata }>(
+  '../assets/fotos-videos/carrosel*.jpg',
+  { eager: true }
+);
+
+const photos = Object.entries(rawModules)
+  .sort(([a], [b]) => {
+    const na = parseInt(a.match(/carrosel(\d+)/)?.[1] ?? '0');
+    const nb = parseInt(b.match(/carrosel(\d+)/)?.[1] ?? '0');
+    return na - nb;
+  })
+  .map(([_, mod], i) => ({
+    src: mod.default,
+    alt: `Corte Barbearia Bayron ${i + 1}`
+  }));
 ---
 
 <section id="galeria" class="py-20 md:py-28 overflow-hidden bg-dark-alt">
@@ -46,10 +41,12 @@ const photos = [
       {[...photos, ...photos].map((photo) => (
         <div class="flex-none w-[280px] md:w-[320px] group">
           <div class="relative overflow-hidden rounded-md aspect-3/4">
-            <img
+            <Image
               src={photo.src}
               alt={photo.alt}
               loading="lazy"
+              widths={[280, 320, 560, 640]}
+              sizes="(max-width: 768px) 280px, 320px"
               class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
             />
             <!-- Hover overlay -->
@@ -64,6 +61,26 @@ const photos = [
     <!-- Scroll hint gradient edges -->
     <div class="hidden md:block absolute left-0 top-0 bottom-4 w-16 bg-gradient-to-r from-dark-alt to-transparent pointer-events-none z-10"></div>
     <div class="hidden md:block absolute right-0 top-0 bottom-4 w-16 bg-gradient-to-l from-dark-alt to-transparent pointer-events-none z-10"></div>
+
+    <!-- Navigation arrows (desktop only) -->
+    <button
+      id="gallery-prev"
+      class="hidden md:flex absolute left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/50 hover:bg-black/75 backdrop-blur-sm border border-white/10 hover:border-white/20 items-center justify-center text-white transition-all duration-200 hover:scale-110"
+      aria-label="Fotos anteriores"
+    >
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+      </svg>
+    </button>
+    <button
+      id="gallery-next"
+      class="hidden md:flex absolute right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/50 hover:bg-black/75 backdrop-blur-sm border border-white/10 hover:border-white/20 items-center justify-center text-white transition-all duration-200 hover:scale-110"
+      aria-label="Próximas fotos"
+    >
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+      </svg>
+    </button>
   </div>
 
   <div class="max-w-6xl mx-auto px-4">
@@ -76,11 +93,11 @@ const photos = [
         id="galeria-cta-instagram"
         class="inline-flex items-center gap-3 border border-white/10 hover:border-teal/40 text-neutral-400 hover:text-white font-medium uppercase tracking-widest px-8 py-4 rounded-md transition-all duration-300 group"
       >
-        <svg class="w-5 h-5 text-teal-light" viewBox="0 0 24 24" fill="currentColor">
+        <svg class="w-5 h-5 text-teal-light" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/>
         </svg>
         Ver mais no Instagram
-        <svg class="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg class="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
         </svg>
       </a>
@@ -107,6 +124,7 @@ const photos = [
     let paused = false;
     let currentScroll = 0;
     const SCROLL_SPEED = 0.8;
+    const ARROW_STEP = 336; // card width (320) + gap (16)
 
     carousel.addEventListener("scroll", () => {
       if (paused) {
@@ -122,7 +140,6 @@ const photos = [
         const card = carousel.querySelector<HTMLElement>(":scope > div");
         if (card) {
           const singleSetWidth = (card.offsetWidth + 16) * originalCount;
-
           if (currentScroll >= singleSetWidth) {
             currentScroll -= singleSetWidth;
           }
@@ -136,9 +153,26 @@ const photos = [
     carousel.addEventListener("mousedown", () => { paused = true; });
     carousel.addEventListener("mouseup", () => { paused = false; });
     carousel.addEventListener("mouseleave", () => { paused = false; });
-
     carousel.addEventListener("touchstart", () => { paused = true; }, { passive: true });
     carousel.addEventListener("touchend", () => { paused = false; }, { passive: true });
+
+    // Arrow navigation
+    const prevBtn = document.getElementById("gallery-prev");
+    const nextBtn = document.getElementById("gallery-next");
+
+    prevBtn?.addEventListener("click", () => {
+      paused = true;
+      currentScroll = Math.max(0, currentScroll - ARROW_STEP);
+      carousel.scrollLeft = currentScroll;
+      setTimeout(() => { paused = false; }, 700);
+    });
+
+    nextBtn?.addEventListener("click", () => {
+      paused = true;
+      currentScroll += ARROW_STEP;
+      carousel.scrollLeft = currentScroll;
+      setTimeout(() => { paused = false; }, 700);
+    });
 
     requestAnimationFrame(scroll);
   });

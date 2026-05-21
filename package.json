@@ -1,5 +1,5 @@
 {
-  "name": "afraid-apogee",
+  "name": "barbearia-bayron",
   "type": "module",
   "version": "0.0.1",
   "engines": {
@@ -15,5 +15,8 @@
     "@tailwindcss/vite": "^4.2.4",
     "astro": "^6.2.1",
     "tailwindcss": "^4.2.4"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.5"
   }
 }
