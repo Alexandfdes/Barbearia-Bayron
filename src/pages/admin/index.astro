@@ -1,0 +1,10 @@
+---
+export const prerender = false;
+import { getSession } from '../../lib/session.js';
+import { formatInTimeZone } from 'date-fns-tz';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+
+return Astro.redirect(`/admin/dia/${formatInTimeZone(new Date(), 'America/Fortaleza', 'yyyy-MM-dd')}`);
+---

@@ -1,0 +1,233 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { barbers, services } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+if (session.role !== 'admin') return Astro.redirect('/admin/servicos');
+
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+
+const svcList = db
+  .select({ id: services.id, name: services.name, priceCents: services.priceCents, active: services.active })
+  .from(services)
+  .orderBy(services.name)
+  .all();
+
+const activeCount   = svcList.filter(s => s.active).length;
+const inactiveCount = svcList.length - activeCount;
+---
+
+<AdminLayout title="Catálogo" barberName={barberRow.name} role="admin">
+  <main class="max-w-3xl mx-auto px-4 py-6">
+
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-lg font-medium text-neutral-100">Catálogo Global</h1>
+        <p class="text-sm text-neutral-500 mt-1">{activeCount} ativos · {inactiveCount} inativos</p>
+      </div>
+      <button id="btn-new-svc"
+        class="flex items-center gap-2 text-xs px-4 py-2 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest rounded transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+        </svg>
+        Novo
+      </button>
+    </div>
+
+    <!-- New service form -->
+    <div id="form-new" class="hidden bg-dark-card border border-teal/20 rounded-md p-4 mb-4 space-y-3">
+      <p class="text-sm font-medium text-neutral-200">Novo serviço</p>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome</label>
+          <input id="new-name" type="text" placeholder="ex: Progressiva"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Preço (R$)</label>
+          <input id="new-price" type="number" min="0" step="1" placeholder="0"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+        </div>
+      </div>
+      <div id="new-error" class="hidden text-red-400 text-xs"></div>
+      <div class="flex gap-2">
+        <button id="new-submit"
+          class="flex-1 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-2.5 rounded transition-colors text-xs">
+          Criar serviço
+        </button>
+        <button id="new-cancel"
+          class="px-4 border border-white/10 text-neutral-400 hover:text-neutral-200 rounded transition-colors text-xs">
+          Cancelar
+        </button>
+      </div>
+    </div>
+
+    <!-- Services list -->
+    <div class="space-y-1.5" id="svc-list">
+      {svcList.map(s => (
+        <div data-svc-row={String(s.id)} class:list={[
+          'bg-dark-card border rounded-md',
+          s.active ? 'border-white/5' : 'border-white/[0.03] opacity-50'
+        ]}>
+          <!-- View mode -->
+          <div data-view={String(s.id)} class="flex items-center gap-3 px-4 py-3">
+            <div class="flex-1 min-w-0">
+              <p class:list={['text-sm font-medium', s.active ? 'text-neutral-100' : 'text-neutral-500']}>
+                {s.name}
+              </p>
+              <p class="text-xs text-neutral-600">
+                R$ {(s.priceCents / 100).toFixed(0)}
+                {!s.active && <span class="ml-2 text-neutral-700">· inativo</span>}
+              </p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button data-edit={String(s.id)}
+                class="text-xs text-neutral-500 hover:text-neutral-300 px-2 py-1 border border-white/10 hover:border-white/20 rounded transition-colors">
+                Editar
+              </button>
+              <button data-toggle-active={String(s.id)} data-current-active={String(s.active)}
+                class:list={[
+                  'text-xs px-2 py-1 border rounded transition-colors',
+                  s.active
+                    ? 'border-red-500/20 text-red-400/70 hover:border-red-500/40 hover:text-red-400'
+                    : 'border-teal/20 text-teal-light/70 hover:border-teal/40 hover:text-teal-light'
+                ]}>
+                {s.active ? 'Desativar' : 'Ativar'}
+              </button>
+            </div>
+          </div>
+
+          <!-- Edit mode (hidden) -->
+          <div data-edit-form={String(s.id)} class="hidden px-4 pb-4 pt-0 space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome</label>
+                <input data-edit-name={String(s.id)} type="text" value={s.name}
+                  class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+              </div>
+              <div>
+                <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Preço (R$)</label>
+                <input data-edit-price={String(s.id)} type="number" min="0" step="1"
+                  value={Math.floor(s.priceCents / 100)}
+                  class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button data-edit-save={String(s.id)}
+                class="flex-1 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-2 rounded transition-colors text-xs">
+                Salvar
+              </button>
+              <button data-edit-close={String(s.id)}
+                class="px-4 border border-white/10 text-neutral-400 hover:text-neutral-200 rounded transition-colors text-xs">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+
+  </main>
+</AdminLayout>
+
+<script>
+  // ── New service form ─────────────────────────────────────────────────────────
+  const formNew = document.getElementById('form-new')!;
+  document.getElementById('btn-new-svc')?.addEventListener('click', () => formNew.classList.toggle('hidden'));
+  document.getElementById('new-cancel')?.addEventListener('click', () => formNew.classList.add('hidden'));
+
+  document.getElementById('new-submit')?.addEventListener('click', async () => {
+    const nameEl  = document.getElementById('new-name')  as HTMLInputElement;
+    const priceEl = document.getElementById('new-price') as HTMLInputElement;
+    const errorEl = document.getElementById('new-error') as HTMLElement;
+    const btn     = document.getElementById('new-submit') as HTMLButtonElement;
+
+    errorEl.classList.add('hidden');
+    const name  = nameEl.value.trim();
+    const price = parseInt(priceEl.value, 10);
+
+    if (!name)      { errorEl.textContent = 'Informe o nome'; errorEl.classList.remove('hidden'); return; }
+    if (isNaN(price) || price <= 0) { errorEl.textContent = 'Preço inválido'; errorEl.classList.remove('hidden'); return; }
+
+    btn.disabled = true; btn.textContent = 'Criando...';
+
+    const res  = await fetch('/api/admin/services', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, priceCents: price * 100 }),
+    });
+    const data = await res.json();
+
+    if (res.ok) { location.reload(); }
+    else { errorEl.textContent = data.error ?? 'Erro'; errorEl.classList.remove('hidden'); btn.disabled = false; btn.textContent = 'Criar serviço'; }
+  });
+
+  // ── Catalog list actions ─────────────────────────────────────────────────────
+  const svcListEl = document.getElementById('svc-list')!;
+
+  svcListEl.addEventListener('click', async (e) => {
+    const target = e.target as HTMLElement;
+
+    // Open edit form
+    const editBtn = target.closest<HTMLButtonElement>('[data-edit]');
+    if (editBtn && !editBtn.dataset.editSave && !editBtn.dataset.editClose) {
+      const id = editBtn.dataset.edit!;
+      document.querySelector(`[data-view="${id}"]`)?.classList.add('hidden');
+      document.querySelector(`[data-edit-form="${id}"]`)?.classList.remove('hidden');
+      return;
+    }
+
+    // Close edit form
+    const closeBtn = target.closest<HTMLButtonElement>('[data-edit-close]');
+    if (closeBtn) {
+      const id = closeBtn.dataset.editClose!;
+      document.querySelector(`[data-edit-form="${id}"]`)?.classList.add('hidden');
+      document.querySelector(`[data-view="${id}"]`)?.classList.remove('hidden');
+      return;
+    }
+
+    // Save edit
+    const saveBtn = target.closest<HTMLButtonElement>('[data-edit-save]');
+    if (saveBtn) {
+      const id      = saveBtn.dataset.editSave!;
+      const nameEl  = document.querySelector<HTMLInputElement>(`[data-edit-name="${id}"]`)!;
+      const priceEl = document.querySelector<HTMLInputElement>(`[data-edit-price="${id}"]`)!;
+
+      saveBtn.disabled = true; saveBtn.textContent = '...';
+
+      const res = await fetch(`/api/admin/services/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nameEl.value.trim(), priceCents: parseInt(priceEl.value, 10) * 100 }),
+      });
+
+      if (res.ok) { location.reload(); }
+      else { saveBtn.disabled = false; saveBtn.textContent = 'Salvar'; alert('Erro ao salvar'); }
+      return;
+    }
+
+    // Toggle active
+    const toggleBtn = target.closest<HTMLButtonElement>('[data-toggle-active]');
+    if (toggleBtn) {
+      const id        = toggleBtn.dataset.toggleActive!;
+      const isActive  = toggleBtn.dataset.currentActive === 'true';
+
+      toggleBtn.disabled = true;
+
+      const res = isActive
+        ? await fetch(`/api/admin/services/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } })
+        : await fetch(`/api/admin/services/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: true }) });
+
+      if (res.ok) { location.reload(); }
+      else { toggleBtn.disabled = false; alert('Erro'); }
+    }
+  });
+</script>

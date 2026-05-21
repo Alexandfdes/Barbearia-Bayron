@@ -1,0 +1,180 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { barbers, barberServices, services } from '../../db/schema.js';
+import { and, eq } from 'drizzle-orm';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+
+// All active services with this barber's settings
+const rows = db
+  .select({
+    id:         services.id,
+    name:       services.name,
+    priceCents: services.priceCents,
+    bsActive:   barberServices.active,
+    bsDuration: barberServices.durationMinutes,
+  })
+  .from(services)
+  .leftJoin(barberServices, and(
+    eq(barberServices.serviceId, services.id),
+    eq(barberServices.barberId,  session.barberId),
+  ))
+  .where(eq(services.active, true))
+  .orderBy(services.name)
+  .all();
+
+const svcList = rows.map(r => ({
+  id:       r.id,
+  name:     r.name,
+  price:    `R$ ${(r.priceCents / 100).toFixed(0)}`,
+  active:   r.bsActive ?? false,
+  duration: r.bsDuration ?? 30,
+}));
+---
+
+<AdminLayout title="Meus Serviços" barberName={barberRow.name} role={session.role}>
+  <main class="max-w-3xl mx-auto px-4 py-6">
+
+    <div class="mb-6">
+      <h1 class="text-lg font-medium text-neutral-100">Meus Serviços</h1>
+      <p class="text-sm text-neutral-500 mt-1">Configure quais serviços você oferece e a duração de cada um.</p>
+    </div>
+
+    <div class="space-y-2" id="services-list">
+      {svcList.map(svc => (
+        <div data-svc-id={String(svc.id)} class="bg-dark-card border border-white/5 rounded-md px-4 py-3">
+          <div class="flex items-center gap-3 flex-wrap">
+
+            <!-- Toggle -->
+            <button
+              data-toggle={String(svc.id)}
+              data-active={String(svc.active)}
+              class:list={[
+                'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors',
+                svc.active ? 'bg-teal' : 'bg-neutral-700'
+              ]}
+              aria-label="Toggle serviço"
+            >
+              <span class:list={[
+                'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform',
+                svc.active ? 'translate-x-5' : 'translate-x-0.5'
+              ]} />
+            </button>
+
+            <!-- Name and price -->
+            <div class="flex-1 min-w-0">
+              <p class:list={['text-sm font-medium', svc.active ? 'text-neutral-100' : 'text-neutral-500']}>
+                {svc.name}
+              </p>
+              <p class="text-xs text-neutral-600">{svc.price}</p>
+            </div>
+
+            <!-- Duration input -->
+            <div class:list={['flex items-center gap-1.5 transition-opacity', !svc.active && 'opacity-30']}>
+              <input
+                data-duration={String(svc.id)}
+                type="number"
+                min="5" max="480" step="5"
+                value={svc.duration}
+                disabled={!svc.active}
+                class="w-16 bg-dark-surface border border-white/10 rounded px-2 py-1 text-xs text-neutral-200 text-center focus:outline-none focus:border-teal/50 disabled:cursor-not-allowed"
+              />
+              <span class="text-xs text-neutral-600">min</span>
+            </div>
+
+            <!-- Save button -->
+            <button
+              data-save={String(svc.id)}
+              class="text-xs px-3 py-1.5 border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light rounded transition-colors"
+            >
+              Salvar
+            </button>
+
+            <!-- Status feedback -->
+            <span data-feedback={String(svc.id)} class="text-xs text-neutral-600 hidden"></span>
+          </div>
+        </div>
+      ))}
+    </div>
+
+  </main>
+</AdminLayout>
+
+<script>
+  const list = document.getElementById('services-list')!;
+
+  async function saveService(id: string) {
+    const toggleBtn = document.querySelector<HTMLButtonElement>(`[data-toggle="${id}"]`);
+    const durationEl = document.querySelector<HTMLInputElement>(`[data-duration="${id}"]`);
+    const feedbackEl = document.querySelector<HTMLSpanElement>(`[data-feedback="${id}"]`);
+    const saveBtn   = document.querySelector<HTMLButtonElement>(`[data-save="${id}"]`);
+
+    if (!toggleBtn || !feedbackEl) return;
+
+    const active   = toggleBtn.dataset.active === 'true';
+    const duration = parseInt(durationEl?.value ?? '30', 10);
+
+    if (saveBtn) { saveBtn.textContent = '...'; saveBtn.disabled = true; }
+
+    try {
+      const res = await fetch(`/api/admin/barber-services/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active, durationMinutes: duration }),
+      });
+
+      feedbackEl.textContent = res.ok ? '✓ Salvo' : '✕ Erro';
+      feedbackEl.className   = `text-xs ${res.ok ? 'text-teal-light' : 'text-red-400'}`;
+      feedbackEl.classList.remove('hidden');
+      setTimeout(() => feedbackEl.classList.add('hidden'), 2000);
+    } catch {
+      feedbackEl.textContent = '✕ Erro de conexão';
+      feedbackEl.className   = 'text-xs text-red-400';
+      feedbackEl.classList.remove('hidden');
+    }
+
+    if (saveBtn) { saveBtn.textContent = 'Salvar'; saveBtn.disabled = false; }
+  }
+
+  list.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+
+    // Toggle active state
+    const toggleBtn = target.closest<HTMLButtonElement>('[data-toggle]');
+    if (toggleBtn) {
+      const id       = toggleBtn.dataset.toggle!;
+      const wasActive = toggleBtn.dataset.active === 'true';
+      const nowActive = !wasActive;
+
+      toggleBtn.dataset.active = String(nowActive);
+      toggleBtn.classList.toggle('bg-teal',        nowActive);
+      toggleBtn.classList.toggle('bg-neutral-700', !nowActive);
+
+      const thumb = toggleBtn.querySelector('span');
+      thumb?.classList.toggle('translate-x-5',   nowActive);
+      thumb?.classList.toggle('translate-x-0.5', !nowActive);
+
+      const durationEl = document.querySelector<HTMLInputElement>(`[data-duration="${id}"]`);
+      const durationWrap = durationEl?.parentElement;
+      if (durationEl) durationEl.disabled = !nowActive;
+      durationWrap?.classList.toggle('opacity-30', !nowActive);
+
+      const nameEl = document.querySelector(`[data-svc-id="${id}"] .flex-1 p`);
+      nameEl?.classList.toggle('text-neutral-100', nowActive);
+      nameEl?.classList.toggle('text-neutral-500', !nowActive);
+    }
+
+    // Save
+    const saveBtn = target.closest<HTMLButtonElement>('[data-save]');
+    if (saveBtn) saveService(saveBtn.dataset.save!);
+  });
+</script>

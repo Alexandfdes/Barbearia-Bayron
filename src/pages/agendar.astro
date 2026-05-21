@@ -1,0 +1,432 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout
+  title="Agendar — Barbearia Bayron"
+  description="Agende seu horário online na Barbearia Bayron em Mossoró/RN. Rápido, fácil e sem espera."
+>
+  <div class="min-h-screen bg-dark">
+
+    <!-- Header mínimo -->
+    <div class="border-b border-white/5 px-4 py-4">
+      <div class="max-w-2xl mx-auto flex items-center justify-between">
+        <a href="/" class="text-neutral-400 hover:text-neutral-200 text-sm flex items-center gap-1.5 transition-colors">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+          </svg>
+          Início
+        </a>
+        <span class="text-neutral-400 text-sm font-medium">Barbearia Bayron</span>
+      </div>
+    </div>
+
+    <main class="max-w-2xl mx-auto px-4 py-8">
+
+      <!-- Indicador de progresso -->
+      <div id="progress" class="flex items-center justify-center gap-0 mb-10 opacity-0 transition-opacity duration-300">
+        <div data-dot="1" class="w-8 h-8 rounded-full border-2 border-white/20 bg-dark-card flex items-center justify-center text-xs font-medium text-neutral-500 transition-all duration-300">1</div>
+        <div class="w-10 md:w-16 h-px bg-white/10"></div>
+        <div data-dot="2" class="w-8 h-8 rounded-full border-2 border-white/20 bg-dark-card flex items-center justify-center text-xs font-medium text-neutral-500 transition-all duration-300">2</div>
+        <div class="w-10 md:w-16 h-px bg-white/10"></div>
+        <div data-dot="3" class="w-8 h-8 rounded-full border-2 border-white/20 bg-dark-card flex items-center justify-center text-xs font-medium text-neutral-500 transition-all duration-300">3</div>
+        <div class="w-10 md:w-16 h-px bg-white/10"></div>
+        <div data-dot="4" class="w-8 h-8 rounded-full border-2 border-white/20 bg-dark-card flex items-center justify-center text-xs font-medium text-neutral-500 transition-all duration-300">4</div>
+      </div>
+
+      <!-- Área do wizard -->
+      <div id="wizard">
+        <div class="flex items-center justify-center py-20 gap-3 text-neutral-500">
+          <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          </svg>
+          Carregando...
+        </div>
+      </div>
+
+    </main>
+  </div>
+</Layout>
+
+<script>
+// ── Tipos ─────────────────────────────────────────────────────────────────────
+interface BarberOption { id: number; name: string; slug: string; durationMinutes: number; }
+interface Service { id: number; name: string; slug: string; priceCents: number; barbers: BarberOption[]; }
+interface SlotInfo { utc: string; time: string; }
+
+// ── Estado ────────────────────────────────────────────────────────────────────
+let services: Service[] = [];
+let selService: Service | null = null;
+let selBarber: BarberOption | null = null;
+let selDate = '';
+let loadedSlots: SlotInfo[] = [];
+let selSlot: SlotInfo | null = null;
+
+// ── Elementos ─────────────────────────────────────────────────────────────────
+const wizard  = document.getElementById('wizard')!;
+const progress = document.getElementById('progress')!;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const DAYS  = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+const MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+function fmt(cents: number) { return `R$ ${(cents / 100).toFixed(0)}`; }
+
+function spinner(msg = 'Carregando...') {
+  return `<div class="flex items-center justify-center py-12 gap-3 text-neutral-500 text-sm">
+    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+    </svg>${msg}</div>`;
+}
+
+function backBtn(toStep: number, label: string) {
+  return `<button data-action="go-back" data-value="${toStep}"
+    class="text-neutral-400 hover:text-neutral-200 text-sm flex items-center gap-1.5 transition-colors mt-8">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+    </svg>${label}</button>`;
+}
+
+function stepHeader(title: string, subtitle: string) {
+  return `<div class="mb-7">
+    <div class="w-8 h-px bg-teal mb-4"></div>
+    <h1 class="font-serif text-2xl md:text-3xl font-medium text-neutral-50 mb-1">${title}</h1>
+    <p class="text-sm text-neutral-400">${subtitle}</p>
+  </div>`;
+}
+
+// ── Progresso ─────────────────────────────────────────────────────────────────
+function setProgress(step: number) {
+  progress.style.opacity = '1';
+  for (let i = 1; i <= 4; i++) {
+    const dot = progress.querySelector(`[data-dot="${i}"]`) as HTMLElement;
+    if (!dot) continue;
+    if (i < step) {
+      dot.className = 'w-8 h-8 rounded-full border-2 border-teal bg-teal/20 flex items-center justify-center text-xs font-medium text-teal-light transition-all duration-300';
+    } else if (i === step) {
+      dot.className = 'w-8 h-8 rounded-full border-2 border-teal bg-teal flex items-center justify-center text-xs font-medium text-white transition-all duration-300';
+    } else {
+      dot.className = 'w-8 h-8 rounded-full border-2 border-white/20 bg-dark-card flex items-center justify-center text-xs font-medium text-neutral-500 transition-all duration-300';
+    }
+  }
+}
+
+// ── Step 1: Serviços ──────────────────────────────────────────────────────────
+async function initStep1() {
+  setProgress(1);
+  try {
+    const res = await fetch('/api/services');
+    if (!res.ok) throw new Error('falha na API');
+    services = await res.json();
+    renderStep1();
+  } catch {
+    wizard.innerHTML = `<p class="text-center text-red-400 py-10">
+      Erro ao carregar serviços.
+      <button data-action="retry" class="underline ml-1">Tentar novamente</button>
+    </p>`;
+  }
+}
+
+function renderStep1() {
+  const cards = services.map(s => `
+    <button data-action="select-service" data-id="${s.id}"
+      class="text-left bg-dark-card border border-white/5 hover:border-teal/40 rounded-md p-5 transition-all duration-200 group w-full">
+      <div class="flex items-start justify-between mb-1.5 pointer-events-none">
+        <span class="text-base font-medium text-neutral-200 group-hover:text-white leading-tight pr-2">${s.name}</span>
+        <span class="text-teal-light font-semibold whitespace-nowrap text-sm">${fmt(s.priceCents)}</span>
+      </div>
+      <span class="text-xs text-neutral-500 pointer-events-none">
+        ${s.barbers.length} barbeiro${s.barbers.length > 1 ? 's' : ''}
+      </span>
+    </button>
+  `).join('');
+
+  wizard.innerHTML = `
+    ${stepHeader('Escolha o serviço', 'Passo 1 de 4')}
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${cards}</div>`;
+}
+
+// ── Step 2: Barbeiros ─────────────────────────────────────────────────────────
+function renderStep2() {
+  if (!selService) return;
+  setProgress(2);
+
+  const cards = selService.barbers.map(b => `
+    <button data-action="select-barber" data-id="${b.id}"
+      class="text-left bg-dark-card border border-white/5 hover:border-teal/40 rounded-md p-5 transition-all duration-200 group w-full">
+      <div class="flex items-center gap-3 mb-2 pointer-events-none">
+        <div class="w-10 h-10 rounded-full bg-dark-surface border border-white/10 flex items-center justify-center text-base font-serif text-teal-light shrink-0">
+          ${b.name.charAt(0)}
+        </div>
+        <span class="text-base font-medium text-neutral-200 group-hover:text-white">${b.name}</span>
+      </div>
+      <span class="text-xs text-neutral-500 pointer-events-none">Duração estimada: ${b.durationMinutes} min</span>
+    </button>
+  `).join('');
+
+  wizard.innerHTML = `
+    ${stepHeader('Escolha o barbeiro', `Serviço: <span class="text-neutral-300">${selService.name}</span>`)}
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">${cards}</div>
+    ${backBtn(1, 'Alterar serviço')}`;
+}
+
+// ── Step 3: Data & Hora ───────────────────────────────────────────────────────
+function todayFortaleza(): string {
+  // Fortaleza = UTC-3, sem horário de verão
+  const d = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+}
+
+function buildDates() {
+  const todayStr = todayFortaleza();
+  const base = new Date(todayStr + 'T12:00:00Z');
+  return Array.from({ length: 30 }, (_, i) => {
+    const t = new Date(base.getTime() + i * 86_400_000);
+    const y = t.getUTCFullYear(), mo = t.getUTCMonth(), d = t.getUTCDate(), wd = t.getUTCDay();
+    return {
+      dateStr: `${y}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`,
+      weekday: wd, dayNum: d, month: MONTHS[mo], label: DAYS[wd], isToday: i === 0,
+    };
+  });
+}
+
+function renderStep3(slotsContent?: string) {
+  if (!selService || !selBarber) return;
+  setProgress(3);
+
+  const dates = buildDates();
+  const datePicker = dates.map(d => {
+    const closed = d.weekday === 0;
+    const active = d.dateStr === selDate;
+    let cls: string;
+    if (closed)      cls = 'flex flex-col items-center py-3 px-2 rounded-md border border-white/5 min-w-[54px] opacity-30 cursor-not-allowed';
+    else if (active) cls = 'flex flex-col items-center py-3 px-2 rounded-md border border-teal bg-teal/10 text-teal-light min-w-[54px] cursor-pointer';
+    else             cls = 'flex flex-col items-center py-3 px-2 rounded-md border border-white/5 hover:border-teal/30 text-neutral-300 hover:text-white min-w-[54px] cursor-pointer transition-colors';
+
+    return `<button ${closed ? 'disabled' : `data-action="select-date" data-value="${d.dateStr}"`}
+      class="${cls}">
+      <span class="text-xs text-neutral-500 mb-1 pointer-events-none">${d.label}</span>
+      <span class="text-base font-semibold leading-none pointer-events-none">${d.dayNum}</span>
+      <span class="text-xs text-neutral-500 mt-1 pointer-events-none">${d.isToday ? 'Hoje' : d.month}</span>
+    </button>`;
+  }).join('');
+
+  const defaultSlots = `<p class="text-neutral-500 text-sm text-center py-8">Selecione um dia acima para ver os horários</p>`;
+
+  wizard.innerHTML = `
+    ${stepHeader('Escolha o dia e horário', `${selService.name} · ${selBarber.name}`)}
+    <div class="overflow-x-auto -mx-4 px-4 pb-2">
+      <div id="date-row" class="flex gap-2 w-max">${datePicker}</div>
+    </div>
+    <div id="slots-area" class="mt-6">${slotsContent ?? defaultSlots}</div>
+    ${backBtn(2, 'Alterar barbeiro')}`;
+
+  // Rola a data selecionada para o centro
+  if (selDate) {
+    requestAnimationFrame(() => {
+      wizard.querySelector(`[data-value="${selDate}"]`)
+        ?.scrollIntoView({ block: 'nearest', inline: 'center' });
+    });
+  }
+}
+
+function renderSlots() {
+  const slotsArea = document.getElementById('slots-area');
+  if (!slotsArea) return;
+
+  if (loadedSlots.length === 0) {
+    slotsArea.innerHTML = `<p class="text-neutral-500 text-sm text-center py-8">Nenhum horário disponível neste dia</p>`;
+    return;
+  }
+
+  const btns = loadedSlots.map(s => {
+    const active = selSlot?.utc === s.utc;
+    const cls = active
+      ? 'px-4 py-3 bg-teal/20 border border-teal rounded-md text-sm font-semibold text-teal-light cursor-pointer transition-all'
+      : 'px-4 py-3 bg-dark-card border border-white/10 hover:border-teal/40 hover:text-white rounded-md text-sm font-medium text-neutral-400 cursor-pointer transition-all';
+    return `<button data-action="select-slot" data-value="${s.utc}" data-time="${s.time}" class="${cls}">${s.time}</button>`;
+  }).join('');
+
+  slotsArea.innerHTML = `<div class="grid grid-cols-4 sm:grid-cols-6 gap-2">${btns}</div>`;
+}
+
+async function loadSlots(date: string) {
+  const slotsArea = document.getElementById('slots-area');
+  if (slotsArea) slotsArea.innerHTML = spinner('Carregando horários...');
+
+  try {
+    const res = await fetch(`/api/slots?barberId=${selBarber!.id}&serviceId=${selService!.id}&date=${date}`);
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error ?? 'erro');
+    loadedSlots = data.slots;
+    renderSlots();
+  } catch (err: any) {
+    const slotsArea2 = document.getElementById('slots-area');
+    if (slotsArea2) slotsArea2.innerHTML = `<p class="text-red-400 text-sm text-center py-6">${err.message || 'Erro ao carregar horários'}</p>`;
+  }
+}
+
+// ── Step 4: Dados do cliente ───────────────────────────────────────────────────
+function renderStep4() {
+  if (!selService || !selBarber || !selSlot) return;
+  setProgress(4);
+
+  const [y, m, d] = selDate.split('-');
+  const dateDisp = `${d}/${m}/${y}`;
+
+  wizard.innerHTML = `
+    ${stepHeader('Seus dados', 'Passo 4 de 4 · Quase lá!')}
+
+    <div class="bg-dark-card border border-white/5 rounded-md p-4 mb-6 space-y-2.5 text-sm">
+      <div class="flex justify-between text-sm">
+        <span class="text-neutral-400">Serviço</span>
+        <span class="text-neutral-200">${selService.name}</span>
+      </div>
+      <div class="flex justify-between text-sm">
+        <span class="text-neutral-400">Barbeiro</span>
+        <span class="text-neutral-200">${selBarber.name}</span>
+      </div>
+      <div class="flex justify-between text-sm">
+        <span class="text-neutral-400">Data</span>
+        <span class="text-neutral-200">${dateDisp}</span>
+      </div>
+      <div class="flex justify-between text-sm">
+        <span class="text-neutral-400">Horário</span>
+        <span class="text-neutral-200">${selSlot.time}</span>
+      </div>
+      <div class="flex justify-between text-sm border-t border-white/5 pt-2.5 mt-1">
+        <span class="text-neutral-300 font-medium">Total</span>
+        <span class="text-teal-light font-semibold">${fmt(selService.priceCents)}</span>
+      </div>
+    </div>
+
+    <form id="booking-form" class="space-y-4">
+      <div>
+        <label class="block text-sm text-neutral-400 mb-1.5">Seu nome completo</label>
+        <input id="inp-name" type="text" placeholder="Ex: João Silva" autocomplete="name"
+          class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm"
+          required minlength="2" maxlength="100" />
+      </div>
+      <div>
+        <label class="block text-sm text-neutral-400 mb-1.5">
+          WhatsApp <span class="text-neutral-600 font-normal">(para avisar a barbearia)</span>
+        </label>
+        <input id="inp-phone" type="tel" placeholder="(88) 99999-0000" autocomplete="tel"
+          class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm"
+          required />
+      </div>
+
+      <p id="form-error" class="hidden text-red-400 text-sm"></p>
+
+      <button type="submit" id="submit-btn"
+        class="w-full bg-teal hover:bg-teal-hover text-white font-bold tracking-widest uppercase px-8 py-4 rounded-md transition-colors duration-300 mt-2 disabled:opacity-60 disabled:cursor-not-allowed">
+        Confirmar agendamento
+      </button>
+    </form>
+
+    ${backBtn(3, 'Alterar horário')}`;
+
+  wizard.querySelector('#booking-form')!.addEventListener('submit', handleSubmit);
+  // Foca no campo nome
+  requestAnimationFrame(() => (document.getElementById('inp-name') as HTMLInputElement)?.focus());
+}
+
+async function handleSubmit(e: Event) {
+  e.preventDefault();
+  const name  = (document.getElementById('inp-name')  as HTMLInputElement).value.trim();
+  const phone = (document.getElementById('inp-phone') as HTMLInputElement).value.trim();
+  const errEl  = document.getElementById('form-error')!;
+  const btn    = document.getElementById('submit-btn') as HTMLButtonElement;
+
+  if (name.length < 2)  { errEl.textContent = 'Nome muito curto (mínimo 2 letras)'; errEl.classList.remove('hidden'); return; }
+  if (!/^\d{10,11}$/.test(phone.replace(/\D/g, ''))) { errEl.textContent = 'WhatsApp inválido (DDD + número)'; errEl.classList.remove('hidden'); return; }
+
+  errEl.classList.add('hidden');
+  btn.disabled = true;
+  btn.textContent = 'Confirmando...';
+
+  try {
+    const res = await fetch('/api/appointments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        barberId:      selBarber!.id,
+        serviceId:     selService!.id,
+        customerName:  name,
+        customerPhone: phone,
+        startsAt:      selSlot!.utc,
+      }),
+    });
+    const data = await res.json();
+
+    if (!res.ok || data.error) {
+      errEl.textContent = data.error ?? 'Erro ao criar agendamento';
+      errEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = 'Confirmar agendamento';
+      return;
+    }
+
+    window.location.href = `/a/${data.manageToken}`;
+  } catch {
+    errEl.textContent = 'Erro de conexão. Tente novamente.';
+    errEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Confirmar agendamento';
+  }
+}
+
+// ── Delegação de eventos ──────────────────────────────────────────────────────
+wizard.addEventListener('click', async (e) => {
+  const target = e.target as HTMLElement;
+  const btn = target.closest('[data-action]') as HTMLElement | null;
+  if (!btn || btn.hasAttribute('disabled')) return;
+
+  const action = btn.dataset.action!;
+  const id     = btn.dataset.id ? parseInt(btn.dataset.id) : 0;
+  const val    = btn.dataset.value ?? '';
+
+  switch (action) {
+    case 'retry':
+      initStep1();
+      break;
+
+    case 'select-service':
+      selService = services.find(s => s.id === id) ?? null;
+      if (selService) renderStep2();
+      break;
+
+    case 'select-barber':
+      selBarber = selService!.barbers.find(b => b.id === id) ?? null;
+      if (selBarber) { selDate = ''; loadedSlots = []; selSlot = null; renderStep3(); }
+      break;
+
+    case 'select-date':
+      selDate = val;
+      selSlot = null;
+      loadedSlots = [];
+      // Re-renderiza o picker (atualiza destaque) e carrega slots
+      renderStep3(spinner('Carregando horários...'));
+      await loadSlots(val);
+      break;
+
+    case 'select-slot':
+      selSlot = { utc: val, time: btn.dataset.time! };
+      renderStep4();
+      break;
+
+    case 'go-back': {
+      const step = parseInt(val);
+      if (step === 1) { selService = null; selBarber = null; selDate = ''; loadedSlots = []; selSlot = null; setProgress(1); renderStep1(); }
+      else if (step === 2) { selBarber = null; selDate = ''; loadedSlots = []; selSlot = null; renderStep2(); }
+      else if (step === 3) { selSlot = null; renderStep3(); if (selDate && loadedSlots.length) renderSlots(); }
+      break;
+    }
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+initStep1();
+</script>

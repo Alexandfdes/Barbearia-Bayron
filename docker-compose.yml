@@ -1,15 +1,13 @@
-version: '3.8'
 services:
-  portfolio:
+  agendar:
     build: .
-    container_name: astro_portfolio
+    container_name: agendar_bayron
     restart: always
-    # Expomos a porta 80 apenas para a rede interna do Docker
-    expose:
-      - "80"
-    networks:
-      - proxy_network
+    ports:
+      - "4321:4321"
+    env_file: .env
+    volumes:
+      - bayron_data:/data
 
-networks:
-  proxy_network:
-    external: true
+volumes:
+  bayron_data:

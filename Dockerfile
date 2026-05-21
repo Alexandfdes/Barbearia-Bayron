@@ -1,16 +1,27 @@
-# Estágio 1: Build (Usamos o Node apenas para compilar o Astro)
+# Estágio 1: Build
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY . .
 RUN npm run build
 
-# Estágio 2: Produção (Usamos o Nginx para servir os arquivos estáticos)
-FROM nginx:alpine
-# Copiamos os arquivos compilados da pasta dist para a pasta pública do Nginx
-COPY --from=build /app/dist /usr/share/nginx/html
-# O Nginx roda internamente na porta 80
-EXPOSE 80
-# Inicia o Nginx
-CMD ["nginx", "-g", "daemon off;"]
+# Estágio 2: Produção (Node.js — Astro standalone com @astrojs/node)
+FROM node:22-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=4321
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/drizzle ./drizzle
+COPY --from=build /app/scripts ./scripts
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./package.json
+
+# Volume para o banco SQLite persistente
+VOLUME ["/data"]
+EXPOSE 4321
+
+# Roda as migrations e depois inicia o servidor
+CMD ["sh", "-c", "node scripts/startup.mjs && node dist/server/entry.mjs"]

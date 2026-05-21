@@ -1,0 +1,78 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?:     string;
+  barberName: string;
+  role:       'admin' | 'barber';
+}
+const { title = 'Admin', barberName, role } = Astro.props;
+const path = Astro.url.pathname;
+---
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title} — Bayron Admin</title>
+  </head>
+  <body class="bg-dark text-neutral-200 min-h-screen">
+
+    <!-- Top header -->
+    <header class="border-b border-white/5 px-4 py-3 bg-dark">
+      <div class="max-w-3xl mx-auto flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <a href="/admin" class="text-sm font-medium text-neutral-200 hover:text-neutral-100 transition-colors">
+            Bayron Admin
+          </a>
+          {role === 'admin' && (
+            <span class="text-xs bg-teal/20 text-teal-light border border-teal/30 px-2 py-0.5 rounded-full">
+              Admin
+            </span>
+          )}
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-neutral-500 hidden sm:block">{barberName}</span>
+          <button id="__logout" class="text-xs text-neutral-500 hover:text-red-400 transition-colors border border-white/10 hover:border-red-500/30 px-3 py-1 rounded">
+            Sair
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav class="border-b border-white/5 px-4 bg-dark sticky top-0 z-20">
+      <div class="max-w-3xl mx-auto flex gap-1 overflow-x-auto">
+        {[
+          { href: '/admin',           label: 'Dia',       active: path.startsWith('/admin/dia') || path === '/admin' },
+          { href: '/admin/servicos',  label: 'Serviços',  active: path === '/admin/servicos' },
+          ...(role === 'admin' ? [{ href: '/admin/catalogo', label: 'Catálogo', active: path === '/admin/catalogo' }] : []),
+          { href: '/admin/bloqueios', label: 'Bloqueios', active: path === '/admin/bloqueios' },
+        ].map(link => (
+          <a href={link.href}
+             class:list={[
+               'text-xs font-medium px-3 py-3 border-b-2 transition-colors whitespace-nowrap',
+               link.active
+                 ? 'border-teal text-teal-light'
+                 : 'border-transparent text-neutral-500 hover:text-neutral-300'
+             ]}>
+            {link.label}
+          </a>
+        ))}
+      </div>
+    </nav>
+
+    <slot />
+
+    <script>
+      document.getElementById('__logout')?.addEventListener('click', async () => {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        location.href = '/admin/login';
+      });
+    </script>
+  </body>
+</html>

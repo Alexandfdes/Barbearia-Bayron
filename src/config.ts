@@ -3,8 +3,7 @@
 // Usando o número de teste conforme solicitado
 export const WHATSAPP_NUMBER = "15551547238";
 
-// Link do TopSalão atualizado para usar o número de teste na query (ou mantendo a base)
-export const TOPSALAO_URL = `https://topsalao.com/app/index.html?tel=84999051196`;
+export const TOPSALAO_URL = '/agendar';
 
 // Link do Instagram
 export const INSTAGRAM_URL = "https://www.instagram.com/barbearia_bayron/";

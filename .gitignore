@@ -22,3 +22,11 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# Claude Code local settings
+.claude/
+
+# SQLite database (persiste no volume Docker ou localmente)
+data/*.db
+data/*.db-shm
+data/*.db-wal

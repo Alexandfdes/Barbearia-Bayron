@@ -1,0 +1,637 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { getSession } from '../../../lib/session.js';
+import { db } from '../../../db/index.js';
+import { appointments, barbers, services } from '../../../db/schema.js';
+import { eq, and, gte, lt } from 'drizzle-orm';
+import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
+
+const TZ = 'America/Fortaleza';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+
+const { date } = Astro.params;
+if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  return Astro.redirect('/admin');
+}
+
+// Barber info for header
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+
+if (!barberRow) return Astro.redirect('/admin/login');
+
+// Filter by barber
+const barberParam = Astro.url.searchParams.get('barber');
+let filterBarberId: number | null = null;
+if (session.role === 'admin') {
+  if (barberParam) {
+    const n = parseInt(barberParam, 10);
+    if (!isNaN(n)) filterBarberId = n;
+  }
+} else {
+  filterBarberId = session.barberId;
+}
+
+// Date range
+const dayStart = fromZonedTime(`${date}T00:00:00`, TZ).toISOString();
+const dayEnd   = fromZonedTime(`${date}T23:59:59`, TZ).toISOString();
+
+// Load appointments
+const apptRows = db
+  .select({
+    id:              appointments.id,
+    status:          appointments.status,
+    startsAt:        appointments.startsAt,
+    endsAt:          appointments.endsAt,
+    durationMinutes: appointments.durationMinutes,
+    priceCents:      appointments.priceCents,
+    customerName:    appointments.customerName,
+    customerPhone:   appointments.customerPhone,
+    barberId:        appointments.barberId,
+    barberName:      barbers.name,
+    serviceName:     services.name,
+  })
+  .from(appointments)
+  .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
+  .innerJoin(services, eq(services.id, appointments.serviceId))
+  .where(
+    filterBarberId !== null
+      ? and(gte(appointments.startsAt, dayStart), lt(appointments.startsAt, dayEnd), eq(appointments.barberId, filterBarberId))
+      : and(gte(appointments.startsAt, dayStart), lt(appointments.startsAt, dayEnd))
+  )
+  .orderBy(appointments.startsAt)
+  .all();
+
+// Load all active barbers (for admin filter tabs)
+const allBarbers = session.role === 'admin'
+  ? db.select({ id: barbers.id, name: barbers.name }).from(barbers).where(eq(barbers.active, true)).all()
+  : [];
+
+// Format appointments
+const nowUtc = new Date();
+const apptList = apptRows.map(a => ({
+  ...a,
+  timeLocal:    formatInTimeZone(new Date(a.startsAt), TZ, 'HH:mm'),
+  endTimeLocal: formatInTimeZone(new Date(a.endsAt),   TZ, 'HH:mm'),
+  price:        `R$ ${(a.priceCents / 100).toFixed(0)}`,
+}));
+
+// First confirmed appointment that hasn't ended yet
+const nextAppt = apptList.find(a => a.status === 'confirmed' && new Date(a.endsAt) > nowUtc) ?? null;
+
+// Day navigation helpers
+function offsetDate(d: string, days: number): string {
+  const [y, mo, day] = d.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, mo - 1, day + days, 12));
+  return dt.toISOString().slice(0, 10);
+}
+const prevDate = offsetDate(date, -1);
+const nextDate = offsetDate(date, 1);
+const todayStr = formatInTimeZone(new Date(), TZ, 'yyyy-MM-dd');
+const isToday  = date === todayStr;
+
+// Formatted date header
+const MONTHS   = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const WEEKDAYS = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+const [y, m, d] = date.split('-').map(Number);
+const dateObj    = new Date(Date.UTC(y, m - 1, d, 12));
+const weekday    = WEEKDAYS[dateObj.getDay()];
+const formattedDate = `${d} de ${MONTHS[m - 1]} de ${y}`;
+
+const filterQs = filterBarberId ? `?barber=${filterBarberId}` : '';
+
+// Data for client script
+const clientData = {
+  date,
+  role:              session.role,
+  sessionBarberId:   session.barberId,
+  filterBarberId,
+  allBarbers,
+};
+---
+
+<AdminLayout title={`${weekday}, ${formattedDate}`} barberName={barberRow.name} role={session.role}>
+
+  <!-- Day navigation -->
+  <div class="border-b border-white/5 px-4 py-3">
+    <div class="max-w-3xl mx-auto flex items-center justify-between">
+      <a href={`/admin/dia/${prevDate}${filterQs}`}
+         class="text-neutral-400 hover:text-neutral-200 transition-colors p-2 -ml-2 flex items-center gap-1 text-sm">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <div class="text-center">
+        <p class="text-sm font-medium text-neutral-200">
+          {weekday}{isToday && <span class="text-teal-light"> · Hoje</span>}
+        </p>
+        <p class="text-xs text-neutral-500">{formattedDate}</p>
+      </div>
+      <a href={`/admin/dia/${nextDate}${filterQs}`}
+         class="text-neutral-400 hover:text-neutral-200 transition-colors p-2 -mr-2 flex items-center gap-1 text-sm">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+
+  <!-- Barber filter tabs (admin only) -->
+  {session.role === 'admin' && (
+    <div class="border-b border-white/5 px-4 py-2.5 overflow-x-auto">
+      <div class="max-w-3xl mx-auto flex gap-2 min-w-max">
+        <a href={`/admin/dia/${date}`}
+           class:list={['text-xs px-3 py-1.5 rounded-full border transition-colors',
+             !filterBarberId ? 'bg-teal/20 border-teal/40 text-teal-light' : 'border-white/10 text-neutral-400 hover:text-neutral-200']}>
+          Todos
+        </a>
+        {allBarbers.map(b => (
+          <a href={`/admin/dia/${date}?barber=${b.id}`}
+             class:list={['text-xs px-3 py-1.5 rounded-full border transition-colors whitespace-nowrap',
+               filterBarberId === b.id ? 'bg-teal/20 border-teal/40 text-teal-light' : 'border-white/10 text-neutral-400 hover:text-neutral-200']}>
+            {b.name.split(' ')[0]}
+          </a>
+        ))}
+      </div>
+    </div>
+  )}
+
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-20">
+
+    <!-- Next appointment highlight -->
+    {nextAppt && (
+      <section>
+        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-2">Próximo</p>
+        <div class="bg-teal/10 border border-teal/30 rounded-md p-4">
+          <div class="flex items-start justify-between gap-4 mb-3">
+            <div>
+              <p class="text-teal-light font-bold text-3xl tabular-nums">{nextAppt.timeLocal}</p>
+              <p class="text-neutral-100 font-medium mt-0.5">{nextAppt.customerName}</p>
+              <p class="text-neutral-400 text-sm">{nextAppt.serviceName}</p>
+              {session.role === 'admin' && (
+                <p class="text-neutral-500 text-xs mt-0.5">{nextAppt.barberName}</p>
+              )}
+            </div>
+            <div class="text-right shrink-0">
+              <p class="text-teal-light font-semibold text-lg">{nextAppt.price}</p>
+              <p class="text-neutral-500 text-xs">{nextAppt.durationMinutes} min</p>
+              <p class="text-neutral-600 text-xs mt-1">{nextAppt.customerPhone}</p>
+            </div>
+          </div>
+          <div id={`actions-${nextAppt.id}`} class="flex gap-2">
+            <button data-action="complete" data-id={String(nextAppt.id)}
+              class="flex-1 bg-teal hover:bg-teal-hover text-white text-xs font-bold uppercase tracking-widest py-2.5 rounded transition-colors">
+              Concluído
+            </button>
+            <button data-action="no-show" data-id={String(nextAppt.id)}
+              class="flex-1 border border-white/10 hover:border-yellow-500/40 text-neutral-400 hover:text-yellow-400 text-xs font-medium py-2.5 rounded transition-colors">
+              No-Show
+            </button>
+            <button data-action="cancel" data-id={String(nextAppt.id)}
+              class="flex-1 border border-white/10 hover:border-red-500/40 text-neutral-400 hover:text-red-400 text-xs font-medium py-2.5 rounded transition-colors">
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </section>
+    )}
+
+    <!-- Full appointment list -->
+    <section>
+      <p class="text-xs text-neutral-500 uppercase tracking-widest mb-2">
+        Agendamentos {apptList.length > 0 && `(${apptList.length})`}
+      </p>
+
+      {apptList.length === 0 ? (
+        <div class="bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
+          <p class="text-neutral-500 text-sm">Nenhum agendamento para este dia.</p>
+        </div>
+      ) : (
+        <div class="space-y-2">
+          {apptList.map(a => (
+            <div class:list={[
+              'bg-dark-card border rounded-md overflow-hidden',
+              a.status === 'confirmed' ? 'border-white/5' :
+              a.status === 'cancelled' ? 'border-red-500/10'  :
+              a.status === 'completed' ? 'border-teal/15'     :
+              'border-yellow-500/15',
+            ]}>
+              <div class="p-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="flex items-start gap-3">
+                    <div class="min-w-[3rem] text-center">
+                      <p class:list={['font-bold tabular-nums',
+                        a.status === 'confirmed' ? 'text-neutral-100' : 'text-neutral-500']}>
+                        {a.timeLocal}
+                      </p>
+                      <p class="text-neutral-600 text-xs">{a.endTimeLocal}</p>
+                    </div>
+                    <div>
+                      <p class:list={['font-medium', a.status !== 'confirmed' ? 'text-neutral-500' : 'text-neutral-100']}>
+                        {a.customerName}
+                      </p>
+                      <p class="text-neutral-400 text-sm">{a.serviceName}</p>
+                      {session.role === 'admin' && (
+                        <p class="text-neutral-600 text-xs">{a.barberName}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div class="text-right shrink-0">
+                    <p class:list={['font-medium', a.status !== 'confirmed' ? 'text-neutral-600' : 'text-neutral-300']}>
+                      {a.price}
+                    </p>
+                    <p class="text-neutral-600 text-xs">{a.durationMinutes} min</p>
+                    <div class="mt-1">
+                      {a.status === 'completed' && <span class="text-xs text-teal-light">✓ Concluído</span>}
+                      {a.status === 'cancelled'  && <span class="text-xs text-red-400">✕ Cancelado</span>}
+                      {a.status === 'no_show'    && <span class="text-xs text-yellow-500">✗ No-Show</span>}
+                    </div>
+                  </div>
+                </div>
+
+                {a.status === 'confirmed' && a.id !== nextAppt?.id && (
+                  <div id={`actions-${a.id}`} class="flex gap-2 mt-3">
+                    <button data-action="complete" data-id={String(a.id)}
+                      class="flex-1 border border-teal/20 hover:bg-teal/10 text-teal-light text-xs font-medium py-2 rounded transition-colors">
+                      Concluído
+                    </button>
+                    <button data-action="no-show" data-id={String(a.id)}
+                      class="flex-1 border border-white/10 hover:border-yellow-500/30 text-neutral-400 hover:text-yellow-400 text-xs font-medium py-2 rounded transition-colors">
+                      No-Show
+                    </button>
+                    <button data-action="cancel" data-id={String(a.id)}
+                      class="flex-1 border border-white/10 hover:border-red-500/30 text-neutral-400 hover:text-red-400 text-xs font-medium py-2 rounded transition-colors">
+                      Cancelar
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+
+    <!-- Bottom action buttons -->
+    <div class="flex gap-3">
+      <button id="btn-manual"
+        class="flex-1 flex items-center justify-center gap-2 border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light text-sm font-medium py-3 rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+        </svg>
+        Agendamento manual
+      </button>
+      <button id="btn-block"
+        class="flex-1 flex items-center justify-center gap-2 border border-white/10 hover:border-red-500/30 text-neutral-400 hover:text-red-400 text-sm font-medium py-3 rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+        </svg>
+        Bloquear horário
+      </button>
+    </div>
+
+    <!-- Manual booking form -->
+    <div id="form-manual" class="hidden border border-teal/20 bg-dark-card rounded-md p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <p class="text-sm font-medium text-neutral-200">Novo agendamento manual</p>
+        <button id="close-manual" class="text-neutral-500 hover:text-neutral-300 text-xs transition-colors">✕ fechar</button>
+      </div>
+
+      {session.role === 'admin' && (
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Barbeiro</label>
+          <select id="m-barber" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+            <option value="">Selecione</option>
+            {allBarbers.map(b => (
+              <option value={String(b.id)}>{b.name.split(' ')[0]}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div>
+        <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Serviço</label>
+        <select id="m-service" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+          <option value="">Selecione</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Horário disponível</label>
+        <div id="m-slots-wrap" class="text-xs text-neutral-500">
+          Selecione barbeiro e serviço primeiro.
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome do cliente</label>
+          <input id="m-name" type="text" placeholder="Nome completo"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">WhatsApp</label>
+          <input id="m-phone" type="tel" placeholder="(84) 9xxxx-xxxx"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+        </div>
+      </div>
+
+      <div id="m-error" class="hidden text-red-400 text-xs text-center py-1"></div>
+
+      <button id="m-submit"
+        class="w-full bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-3 rounded transition-colors text-sm disabled:opacity-50">
+        Confirmar agendamento
+      </button>
+    </div>
+
+    <!-- Block time form -->
+    <div id="form-block" class="hidden border border-red-500/20 bg-dark-card rounded-md p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <p class="text-sm font-medium text-neutral-200">Bloquear horário</p>
+        <button id="close-block" class="text-neutral-500 hover:text-neutral-300 text-xs transition-colors">✕ fechar</button>
+      </div>
+
+      {session.role === 'admin' && (
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Aplicar para</label>
+          <select id="b-barber" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+            <option value="">Todos (feriado)</option>
+            {allBarbers.map(b => (
+              <option value={String(b.id)}>{b.name.split(' ')[0]}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Início</label>
+          <input id="b-start" type="time" value="09:00"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Fim</label>
+          <input id="b-end" type="time" value="18:00"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Motivo (opcional)</label>
+        <input id="b-reason" type="text" placeholder="ex: Almoço, Folga, Feriado..."
+          class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+      </div>
+
+      <div id="b-error" class="hidden text-red-400 text-xs text-center py-1"></div>
+
+      <button id="b-submit"
+        class="w-full bg-red-600 hover:bg-red-700 text-white font-bold uppercase tracking-widest py-3 rounded transition-colors text-sm disabled:opacity-50">
+        Bloquear
+      </button>
+    </div>
+
+  </main>
+</AdminLayout>
+
+<script define:vars={{ clientData }}>
+  const { date, role, sessionBarberId, filterBarberId, allBarbers } = clientData;
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  function localTimeToUtcIso(dateStr, timeStr) {
+    const [y, mo, d]   = dateStr.split('-').map(Number);
+    const [h, min]     = timeStr.split(':').map(Number);
+    const utc          = new Date(Date.UTC(y, mo - 1, d, h + 3, min));
+    return utc.toISOString();
+  }
+
+  async function callApi(endpoint, method = 'POST', body = undefined) {
+    const res = await fetch(endpoint, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
+  // ─── Action buttons ─────────────────────────────────────────────────────────
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+
+    const action = btn.dataset.action;
+    const id     = btn.dataset.id;
+
+    if (action === 'complete' || action === 'no-show') {
+      btn.disabled    = true;
+      btn.textContent = '...';
+      const { ok, data } = await callApi(`/api/admin/appointments/${id}/${action}`);
+      if (ok) { location.reload(); } else { alert(data.error ?? 'Erro'); btn.disabled = false; }
+
+    } else if (action === 'cancel') {
+      const wrap = document.getElementById(`actions-${id}`);
+      if (!wrap) return;
+      wrap.innerHTML = `
+        <button data-action="cancel-confirm" data-id="${id}"
+          class="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-widest py-2.5 rounded transition-colors">
+          Sim, cancelar
+        </button>
+        <button data-action="cancel-abort" data-id="${id}"
+          class="flex-1 border border-white/10 text-neutral-400 hover:text-neutral-200 text-xs font-medium py-2.5 rounded transition-colors">
+          Não, voltar
+        </button>`;
+
+    } else if (action === 'cancel-confirm') {
+      btn.textContent = 'Cancelando...';
+      btn.disabled    = true;
+      const { ok, data } = await callApi(`/api/admin/appointments/${id}/cancel`);
+      if (ok) { location.reload(); } else { alert(data.error ?? 'Erro'); location.reload(); }
+
+    } else if (action === 'cancel-abort') {
+      location.reload();
+    }
+  });
+
+  // ─── Toggle forms ────────────────────────────────────────────────────────────
+
+  const formManual = document.getElementById('form-manual');
+  const formBlock  = document.getElementById('form-block');
+
+  document.getElementById('btn-manual')?.addEventListener('click', () => {
+    formBlock?.classList.add('hidden');
+    formManual?.classList.toggle('hidden');
+    if (!formManual?.classList.contains('hidden')) loadServices();
+  });
+
+  document.getElementById('btn-block')?.addEventListener('click', () => {
+    formManual?.classList.add('hidden');
+    formBlock?.classList.toggle('hidden');
+  });
+
+  document.getElementById('close-manual')?.addEventListener('click', () => formManual?.classList.add('hidden'));
+  document.getElementById('close-block')?.addEventListener('click',  () => formBlock?.classList.add('hidden'));
+
+  // ─── Manual booking form ─────────────────────────────────────────────────────
+
+  let selectedSlot = null;
+
+  async function loadServices() {
+    const serviceEl = document.getElementById('m-service');
+    if (!serviceEl || serviceEl.options.length > 1) return;
+    const res  = await fetch('/api/services');
+    const data = await res.json();
+    data.forEach(svc => {
+      const opt = document.createElement('option');
+      opt.value       = String(svc.id);
+      opt.textContent = svc.name;
+      serviceEl.appendChild(opt);
+    });
+  }
+
+  async function loadSlots() {
+    const slotsWrap = document.getElementById('m-slots-wrap');
+    if (!slotsWrap) return;
+
+    const barberId  = role === 'admin'
+      ? document.getElementById('m-barber')?.value
+      : String(sessionBarberId);
+    const serviceId = document.getElementById('m-service')?.value;
+
+    if (!barberId || !serviceId) {
+      slotsWrap.innerHTML = '<span class="text-neutral-500">Selecione barbeiro e serviço primeiro.</span>';
+      selectedSlot = null;
+      return;
+    }
+
+    slotsWrap.innerHTML = '<span class="text-neutral-500">Carregando...</span>';
+    selectedSlot = null;
+
+    try {
+      const res  = await fetch(`/api/slots?barberId=${barberId}&serviceId=${serviceId}&date=${date}`);
+      const data = await res.json();
+
+      if (!data.slots?.length) {
+        slotsWrap.innerHTML = '<span class="text-neutral-500">Nenhum horário disponível.</span>';
+        return;
+      }
+
+      slotsWrap.innerHTML = '';
+      const grid = document.createElement('div');
+      grid.className = 'flex flex-wrap gap-2';
+      data.slots.forEach(isoStr => {
+        const [h, min] = new Date(isoStr).toISOString().slice(11, 16).split(':').map(Number);
+        const hLocal   = (h - 3 + 24) % 24;
+        const label    = `${String(hLocal).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+        const btn      = document.createElement('button');
+        btn.type        = 'button';
+        btn.textContent = label;
+        btn.dataset.iso = isoStr;
+        btn.className   = 'text-xs px-3 py-1.5 border border-white/10 rounded text-neutral-400 hover:border-teal/40 hover:text-teal-light transition-colors';
+        btn.addEventListener('click', () => {
+          slotsWrap.querySelectorAll('button').forEach(b =>
+            b.classList.remove('bg-teal/20', 'border-teal/50', 'text-teal-light'));
+          btn.classList.add('bg-teal/20', 'border-teal/50', 'text-teal-light');
+          selectedSlot = isoStr;
+        });
+        grid.appendChild(btn);
+      });
+      slotsWrap.appendChild(grid);
+    } catch {
+      slotsWrap.innerHTML = '<span class="text-red-400">Erro ao carregar horários.</span>';
+    }
+  }
+
+  document.getElementById('m-barber')?.addEventListener('change', loadSlots);
+  document.getElementById('m-service')?.addEventListener('change', loadSlots);
+
+  document.getElementById('m-submit')?.addEventListener('click', async () => {
+    const errorEl = document.getElementById('m-error');
+    const submitBtn = document.getElementById('m-submit');
+
+    const barberId  = role === 'admin'
+      ? document.getElementById('m-barber')?.value
+      : String(sessionBarberId);
+    const serviceId = document.getElementById('m-service')?.value;
+    const name      = document.getElementById('m-name')?.value.trim();
+    const phone     = document.getElementById('m-phone')?.value.trim();
+
+    const showErr = msg => {
+      errorEl.textContent = msg;
+      errorEl.classList.remove('hidden');
+    };
+
+    errorEl.classList.add('hidden');
+    if (!barberId)  return showErr('Selecione um barbeiro');
+    if (!serviceId) return showErr('Selecione um serviço');
+    if (!selectedSlot) return showErr('Selecione um horário');
+    if (!name)      return showErr('Informe o nome do cliente');
+    if (!phone)     return showErr('Informe o WhatsApp do cliente');
+
+    submitBtn.disabled    = true;
+    submitBtn.textContent = 'Agendando...';
+
+    const { ok, data } = await callApi('/api/admin/appointments', 'POST', {
+      barberId:      parseInt(barberId),
+      serviceId:     parseInt(serviceId),
+      customerName:  name,
+      customerPhone: phone,
+      startsAt:      selectedSlot,
+    });
+
+    if (ok) {
+      location.reload();
+    } else {
+      showErr(data.error ?? 'Erro ao criar agendamento');
+      submitBtn.disabled    = false;
+      submitBtn.textContent = 'Confirmar agendamento';
+    }
+  });
+
+  // ─── Block time form ──────────────────────────────────────────────────────────
+
+  document.getElementById('b-submit')?.addEventListener('click', async () => {
+    const errorEl  = document.getElementById('b-error');
+    const submitBtn = document.getElementById('b-submit');
+
+    const barberId = role === 'admin'
+      ? (document.getElementById('b-barber')?.value || null)
+      : sessionBarberId;
+    const startTime = document.getElementById('b-start')?.value;
+    const endTime   = document.getElementById('b-end')?.value;
+    const reason    = document.getElementById('b-reason')?.value.trim() || undefined;
+
+    const showErr = msg => {
+      errorEl.textContent = msg;
+      errorEl.classList.remove('hidden');
+    };
+
+    errorEl.classList.add('hidden');
+    if (!startTime || !endTime) return showErr('Informe os horários');
+
+    const startsAt = localTimeToUtcIso(date, startTime);
+    const endsAt   = localTimeToUtcIso(date, endTime);
+
+    submitBtn.disabled    = true;
+    submitBtn.textContent = 'Bloqueando...';
+
+    const { ok, data } = await callApi('/api/admin/time-off', 'POST', {
+      barberId: barberId ? parseInt(barberId) : null,
+      startsAt,
+      endsAt,
+      reason,
+    });
+
+    if (ok) {
+      location.reload();
+    } else {
+      showErr(data.error ?? 'Erro ao bloquear');
+      submitBtn.disabled    = false;
+      submitBtn.textContent = 'Bloquear';
+    }
+  });
+</script>

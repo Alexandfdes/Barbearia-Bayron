@@ -1,0 +1,104 @@
+---
+export const prerender = false;
+import '../../styles/global.css';
+import { getSession } from '../../lib/session.js';
+
+const session = await getSession(Astro.request);
+if (session) return Astro.redirect('/admin');
+---
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Login — Bayron Admin</title>
+  </head>
+  <body class="bg-dark text-neutral-200 min-h-screen flex items-center justify-center px-4">
+    <div class="w-full max-w-sm">
+
+      <div class="text-center mb-8">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-1">Barbearia Bayron</p>
+        <h1 class="font-serif text-2xl font-medium text-neutral-50">Painel Admin</h1>
+      </div>
+
+      <form id="login-form" class="bg-dark-card border border-white/5 rounded-md p-6 space-y-4">
+        <div>
+          <label for="slug" class="block text-xs text-neutral-500 uppercase tracking-widest mb-2">
+            Usuário
+          </label>
+          <input
+            id="slug"
+            type="text"
+            autocomplete="username"
+            autofocus
+            placeholder="ex: bayron"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-teal/50 transition-colors"
+          />
+        </div>
+
+        <div>
+          <label for="password" class="block text-xs text-neutral-500 uppercase tracking-widest mb-2">
+            Senha
+          </label>
+          <input
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-teal/50 transition-colors"
+          />
+        </div>
+
+        <div id="login-error" class="hidden text-red-400 text-sm text-center py-1"></div>
+
+        <button
+          type="submit"
+          id="login-btn"
+          class="w-full bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest px-6 py-3 rounded transition-colors duration-300 text-sm"
+        >
+          Entrar
+        </button>
+      </form>
+
+    </div>
+
+    <script>
+      const form     = document.getElementById('login-form') as HTMLFormElement;
+      const slugEl   = document.getElementById('slug') as HTMLInputElement;
+      const passEl   = document.getElementById('password') as HTMLInputElement;
+      const errorEl  = document.getElementById('login-error') as HTMLDivElement;
+      const btnEl    = document.getElementById('login-btn') as HTMLButtonElement;
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorEl.classList.add('hidden');
+        errorEl.textContent = '';
+        btnEl.textContent   = 'Entrando...';
+        btnEl.disabled      = true;
+
+        try {
+          const res = await fetch('/api/auth/login', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ slug: slugEl.value.trim(), password: passEl.value }),
+          });
+
+          if (res.ok) {
+            location.href = '/admin';
+            return;
+          }
+
+          const data = await res.json();
+          errorEl.textContent = data.error ?? 'Erro ao fazer login';
+          errorEl.classList.remove('hidden');
+        } catch {
+          errorEl.textContent = 'Erro de conexão. Tente novamente.';
+          errorEl.classList.remove('hidden');
+        }
+
+        btnEl.textContent = 'Entrar';
+        btnEl.disabled    = false;
+      });
+    </script>
+  </body>
+</html>

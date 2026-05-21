@@ -6,3 +6,6 @@ dist
 .dockerignore
 Dockerfile
 npm-debug.log
+.env
+.env.production
+data/

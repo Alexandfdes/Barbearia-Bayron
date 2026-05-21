@@ -1,0 +1,288 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { barbers, timeOff } from '../../db/schema.js';
+import { and, eq, isNull, or } from 'drizzle-orm';
+import { formatInTimeZone } from 'date-fns-tz';
+
+const TZ = 'America/Fortaleza';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+
+// Load time-off entries
+const baseQuery = db
+  .select({
+    id:        timeOff.id,
+    barberId:  timeOff.barberId,
+    barberName: barbers.name,
+    startsAt:  timeOff.startsAt,
+    endsAt:    timeOff.endsAt,
+    reason:    timeOff.reason,
+  })
+  .from(timeOff)
+  .leftJoin(barbers, eq(barbers.id, timeOff.barberId));
+
+const rawRows = session.role === 'admin'
+  ? baseQuery.orderBy(timeOff.startsAt).all()
+  : baseQuery
+      .where(or(eq(timeOff.barberId, session.barberId), isNull(timeOff.barberId)))
+      .orderBy(timeOff.startsAt)
+      .all();
+
+const now = new Date();
+const entries = rawRows.map(r => ({
+  id:         r.id,
+  barberId:   r.barberId,
+  barberName: r.barberName ?? 'Todos',
+  reason:     r.reason,
+  isPast:     new Date(r.endsAt) < now,
+  dateLabel:  formatInTimeZone(new Date(r.startsAt), TZ, "dd/MM/yyyy"),
+  startTime:  formatInTimeZone(new Date(r.startsAt), TZ, 'HH:mm'),
+  endTime:    formatInTimeZone(new Date(r.endsAt),   TZ, 'HH:mm'),
+  sameDay:    new Date(r.startsAt).toDateString() === new Date(r.endsAt).toDateString(),
+}));
+
+// Load all active barbers for the form (admin)
+const allBarbers = session.role === 'admin'
+  ? db.select({ id: barbers.id, name: barbers.name }).from(barbers).where(eq(barbers.active, true)).all()
+  : [];
+
+const upcoming = entries.filter(e => !e.isPast);
+const past     = entries.filter(e => e.isPast);
+
+// Today in Fortaleza for form default
+const todayStr = formatInTimeZone(new Date(), TZ, 'yyyy-MM-dd');
+
+const clientData = { role: session.role, sessionBarberId: session.barberId, allBarbers };
+---
+
+<AdminLayout title="Bloqueios" barberName={barberRow.name} role={session.role}>
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-lg font-medium text-neutral-100">Bloqueios de Horário</h1>
+        <p class="text-sm text-neutral-500 mt-1">Folgas, feriados, almoços e outros impedimentos.</p>
+      </div>
+      <button id="btn-new"
+        class="flex items-center gap-2 text-xs px-4 py-2 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest rounded transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+        </svg>
+        Novo
+      </button>
+    </div>
+
+    <!-- New bloqueio form -->
+    <div id="form-new" class="hidden bg-dark-card border border-teal/20 rounded-md p-4 space-y-3">
+      <p class="text-sm font-medium text-neutral-200">Novo bloqueio</p>
+
+      {session.role === 'admin' && (
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Aplicar para</label>
+          <select id="f-barber" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+            <option value="">Todos (feriado)</option>
+            {allBarbers.map(b => (
+              <option value={String(b.id)}>{b.name.split(' ')[0]}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div>
+        <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Data</label>
+        <input id="f-date" type="date" value={todayStr}
+          class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Início</label>
+          <input id="f-start" type="time" value="08:00"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Fim</label>
+          <input id="f-end" type="time" value="20:00"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Motivo (opcional)</label>
+        <input id="f-reason" type="text" placeholder="ex: Almoço, Folga, Feriado, Atestado..."
+          class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+      </div>
+
+      <div id="f-error" class="hidden text-red-400 text-xs"></div>
+
+      <div class="flex gap-2">
+        <button id="f-submit"
+          class="flex-1 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-2.5 rounded transition-colors text-xs">
+          Confirmar bloqueio
+        </button>
+        <button id="f-cancel"
+          class="px-4 border border-white/10 text-neutral-400 hover:text-neutral-200 rounded transition-colors text-xs">
+          Cancelar
+        </button>
+      </div>
+    </div>
+
+    <!-- Upcoming entries -->
+    {upcoming.length > 0 && (
+      <section>
+        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-2">Próximos ({upcoming.length})</p>
+        <div class="space-y-2">
+          {upcoming.map(e => (
+            <div class="bg-dark-card border border-white/5 rounded-md px-4 py-3 flex items-center gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <p class="text-sm font-medium text-neutral-100">{e.dateLabel}</p>
+                  <span class="text-xs text-neutral-500">{e.startTime} – {e.endTime}</span>
+                </div>
+                <div class="flex items-center gap-2 mt-0.5">
+                  <p class="text-xs text-neutral-500">{e.barberName}</p>
+                  {e.reason && <span class="text-xs text-neutral-600">· {e.reason}</span>}
+                </div>
+              </div>
+              <button data-delete={String(e.id)}
+                class="shrink-0 text-xs text-neutral-600 hover:text-red-400 border border-white/10 hover:border-red-500/30 px-2 py-1 rounded transition-colors">
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
+
+    {upcoming.length === 0 && past.length === 0 && (
+      <div class="bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
+        <p class="text-neutral-500 text-sm">Nenhum bloqueio cadastrado.</p>
+      </div>
+    )}
+
+    <!-- Past entries (collapsed) -->
+    {past.length > 0 && (
+      <section>
+        <button id="btn-toggle-past"
+          class="text-xs text-neutral-600 hover:text-neutral-400 transition-colors flex items-center gap-1">
+          <svg id="past-chevron" class="w-3 h-3 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+          </svg>
+          Histórico ({past.length})
+        </button>
+        <div id="past-list" class="hidden mt-2 space-y-1.5">
+          {past.map(e => (
+            <div class="bg-dark-card border border-white/[0.03] rounded-md px-4 py-3 opacity-50">
+              <div class="flex items-center gap-2">
+                <p class="text-sm text-neutral-500">{e.dateLabel}</p>
+                <span class="text-xs text-neutral-600">{e.startTime} – {e.endTime}</span>
+                <span class="text-xs text-neutral-700">· {e.barberName}</span>
+                {e.reason && <span class="text-xs text-neutral-700">· {e.reason}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
+
+  </main>
+</AdminLayout>
+
+<script define:vars={{ clientData }}>
+  const { role, sessionBarberId, allBarbers } = clientData;
+
+  function localToUtcIso(dateStr, timeStr) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    const [h, min]   = timeStr.split(':').map(Number);
+    return new Date(Date.UTC(y, mo - 1, d, h + 3, min)).toISOString();
+  }
+
+  // Toggle new form
+  const formNew = document.getElementById('form-new');
+  document.getElementById('btn-new')?.addEventListener('click', () => formNew?.classList.toggle('hidden'));
+  document.getElementById('f-cancel')?.addEventListener('click', () => formNew?.classList.add('hidden'));
+
+  // Submit new bloqueio
+  document.getElementById('f-submit')?.addEventListener('click', async () => {
+    const barberEl = document.getElementById('f-barber');
+    const dateEl   = document.getElementById('f-date');
+    const startEl  = document.getElementById('f-start');
+    const endEl    = document.getElementById('f-end');
+    const reasonEl = document.getElementById('f-reason');
+    const errorEl  = document.getElementById('f-error');
+    const submitBtn = document.getElementById('f-submit');
+
+    errorEl.classList.add('hidden');
+
+    const date      = dateEl?.value;
+    const startTime = startEl?.value;
+    const endTime   = endEl?.value;
+
+    if (!date || !startTime || !endTime) {
+      errorEl.textContent = 'Preencha todos os campos obrigatórios';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    const barberId = role === 'admin'
+      ? (barberEl?.value ? parseInt(barberEl.value) : null)
+      : sessionBarberId;
+
+    submitBtn.disabled    = true;
+    submitBtn.textContent = 'Salvando...';
+
+    const res  = await fetch('/api/admin/time-off', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        barberId,
+        startsAt: localToUtcIso(date, startTime),
+        endsAt:   localToUtcIso(date, endTime),
+        reason:   reasonEl?.value.trim() || undefined,
+      }),
+    });
+    const data = await res.json();
+
+    if (res.ok) { location.reload(); }
+    else {
+      errorEl.textContent = data.error ?? 'Erro';
+      errorEl.classList.remove('hidden');
+      submitBtn.disabled    = false;
+      submitBtn.textContent = 'Confirmar bloqueio';
+    }
+  });
+
+  // Delete entry
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-delete]');
+    if (!btn) return;
+
+    const id = btn.dataset.delete;
+    btn.disabled = true;
+
+    const res = await fetch(`/api/admin/time-off?id=${id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (res.ok) { location.reload(); }
+    else { btn.disabled = false; alert('Erro ao remover'); }
+  });
+
+  // Toggle past entries
+  const pastList    = document.getElementById('past-list');
+  const pastChevron = document.getElementById('past-chevron');
+  document.getElementById('btn-toggle-past')?.addEventListener('click', () => {
+    pastList?.classList.toggle('hidden');
+    pastChevron?.classList.toggle('rotate-90');
+  });
+</script>
