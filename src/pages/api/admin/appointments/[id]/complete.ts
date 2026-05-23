@@ -31,7 +31,11 @@ export const POST: APIRoute = async ({ request, params }) => {
   }
 
   db.update(appointments)
-    .set({ status: 'completed' })
+    .set({
+      status:           'completed',
+      lastModifiedById: session.barberId,
+      lastModifiedAt:   new Date().toISOString(),
+    })
     .where(eq(appointments.id, id))
     .run();
 

@@ -24,22 +24,38 @@ const stmtConflictOff = sqlite.prepare(`
 `);
 const stmtInsert = sqlite.prepare(`
   INSERT INTO appointments
-    (barber_id, service_id, customer_name, customer_phone,
+    (barber_id, service_id, customer_name, customer_phone, customer_birthdate,
      starts_at, ends_at, duration_minutes, price_cents,
-     manage_token, created_by)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     manage_token, created_by, idempotency_key)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+// Busca por idempotencyKey já usado (cliente clicou 2x e o 1º foi).
+// Retorna o agendamento existente pra responder 200 sem criar duplicado.
+const stmtByIdempotencyKey = sqlite.prepare(`
+  SELECT a.id, a.manage_token, a.status, a.starts_at, a.ends_at,
+         a.duration_minutes, a.price_cents, a.customer_name,
+         b.name AS barber_name, s.name AS service_name
+  FROM appointments a
+  INNER JOIN barbers  b ON b.id = a.barber_id
+  INNER JOIN services s ON s.id = a.service_id
+  WHERE a.idempotency_key = ?
 `);
 const stmtBegin    = sqlite.prepare('BEGIN IMMEDIATE');
 const stmtCommit   = sqlite.prepare('COMMIT');
 const stmtRollback = sqlite.prepare('ROLLBACK');
 
 export interface BookParams {
-  barberId:      number;
-  serviceId:     number;
-  customerName:  string;
-  customerPhone: string;
-  startsAt:      Date;
-  createdBy:     'customer' | 'barber';
+  barberId:          number;
+  serviceId:         number;
+  customerName:      string;
+  customerPhone:     string;
+  /** 'YYYY-MM-DD' — opcional; quando barbeiro cria pelo admin pode não ter */
+  customerBirthdate: string | null;
+  startsAt:          Date;
+  createdBy:         'customer' | 'barber';
+  /** Idempotência: cliente passa chave única por tentativa pra evitar duplo booking. */
+  idempotencyKey?:   string | null;
 }
 
 export type BookResult =
@@ -49,7 +65,32 @@ export type BookResult =
   | { ok: false; httpStatus: number; error: string };
 
 export function bookAppointment(params: BookParams): BookResult {
-  const { barberId, serviceId, customerName, customerPhone, startsAt, createdBy } = params;
+  const { barberId, serviceId, customerName, customerPhone, customerBirthdate, startsAt, createdBy } = params;
+  const idempotencyKey = params.idempotencyKey ?? null;
+
+  // Curto-circuito: se já existe agendamento com essa chave, retorna ele em vez de criar.
+  if (idempotencyKey) {
+    const existing = stmtByIdempotencyKey.get(idempotencyKey) as {
+      id: number; manage_token: string; status: string; starts_at: string; ends_at: string;
+      duration_minutes: number; price_cents: number; customer_name: string;
+      barber_name: string; service_name: string;
+    } | undefined;
+    if (existing) {
+      return {
+        ok: true,
+        id: existing.id,
+        manageToken: existing.manage_token,
+        status: existing.status,
+        startsAt: existing.starts_at,
+        endsAt: existing.ends_at,
+        durationMinutes: existing.duration_minutes,
+        priceCents: existing.price_cents,
+        customerName: existing.customer_name,
+        barberName: existing.barber_name,
+        serviceName: existing.service_name,
+      };
+    }
+  }
 
   const bsRows = db
     .select({
@@ -116,8 +157,9 @@ export function bookAppointment(params: BookParams): BookResult {
     }
 
     const result = stmtInsert.run(
-      barberId, serviceId, customerName, customerPhone,
-      startsAtIso, endsAtIso, durationMinutes, priceCents, manageToken, createdBy
+      barberId, serviceId, customerName, customerPhone, customerBirthdate,
+      startsAtIso, endsAtIso, durationMinutes, priceCents, manageToken, createdBy,
+      idempotencyKey
     );
     stmtCommit.run();
 

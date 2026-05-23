@@ -8,6 +8,20 @@
       "when": 1779386725269,
       "tag": "0000_handy_iron_monger",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1779999999000,
+      "tag": "0001_add_customer_birthdate",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1780099999000,
+      "tag": "0002_audit_and_idempotency",
+      "breakpoints": true
     }
   ]
 }

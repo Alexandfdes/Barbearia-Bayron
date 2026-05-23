@@ -1,10 +1,421 @@
 ---
 export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
 import { getSession } from '../../lib/session.js';
-import { formatInTimeZone } from 'date-fns-tz';
+import { sqlite, db } from '../../db/index.js';
+import { barbers, appointments, services } from '../../db/schema.js';
+import { eq, and, gte, lt, desc } from 'drizzle-orm';
+import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
+
+const TZ = 'America/Fortaleza';
 
 const session = await getSession(Astro.request);
 if (!session) return Astro.redirect('/admin/login');
 
-return Astro.redirect(`/admin/dia/${formatInTimeZone(new Date(), 'America/Fortaleza', 'yyyy-MM-dd')}`);
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+
+const nowUtc = new Date();
+const todayStr = formatInTimeZone(nowUtc, TZ, 'yyyy-MM-dd');
+
+// ─── Janelas de tempo ──────────────────────────────────────────────────────
+const todayStartUtc = fromZonedTime(`${todayStr}T00:00:00`, TZ).toISOString();
+const todayEndUtc   = fromZonedTime(`${todayStr}T23:59:59`, TZ).toISOString();
+
+// Início da semana (segunda) — domingo é folga, semana começa segunda
+function getMondayOf(date: Date): string {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return formatInTimeZone(d, TZ, 'yyyy-MM-dd');
+}
+function addDaysStr(s: string, n: number): string {
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n, 12));
+  return dt.toISOString().slice(0, 10);
+}
+
+const mondayStr      = getMondayOf(nowUtc);
+const weekStartUtc   = fromZonedTime(`${mondayStr}T00:00:00`, TZ).toISOString();
+const weekEndStr     = addDaysStr(mondayStr, 7);
+const weekEndUtc     = fromZonedTime(`${weekEndStr}T00:00:00`, TZ).toISOString();
+
+const monthStr       = todayStr.slice(0, 7); // YYYY-MM
+const monthStartUtc  = fromZonedTime(`${monthStr}-01T00:00:00`, TZ).toISOString();
+const [my, mm] = monthStr.split('-').map(Number);
+const nextMonthStr   = mm === 12 ? `${my + 1}-01` : `${my}-${String(mm + 1).padStart(2, '0')}`;
+const monthEndUtc    = fromZonedTime(`${nextMonthStr}-01T00:00:00`, TZ).toISOString();
+
+const sevenDaysAgo   = new Date(nowUtc.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+// ─── Helpers de query ─────────────────────────────────────────────────────
+// Pra barbeiro comum, sempre filtra pelos próprios. Admin vê todos.
+const barberFilter = session.role === 'admin' ? null : session.barberId;
+
+// Receita num intervalo (confirmed + completed)
+function sumRevenue(startIso: string, endIso: string): number {
+  const stmt = barberFilter !== null
+    ? sqlite.prepare(`SELECT COALESCE(SUM(price_cents),0) AS s FROM appointments
+        WHERE status IN ('confirmed','completed')
+          AND barber_id = ?
+          AND starts_at >= ? AND starts_at < ?`)
+    : sqlite.prepare(`SELECT COALESCE(SUM(price_cents),0) AS s FROM appointments
+        WHERE status IN ('confirmed','completed')
+          AND starts_at >= ? AND starts_at < ?`);
+  const result = barberFilter !== null
+    ? (stmt.get(barberFilter, startIso, endIso) as { s: number })
+    : (stmt.get(startIso, endIso) as { s: number });
+  return result.s;
+}
+
+function countAppts(startIso: string, endIso: string, statuses: string[]): number {
+  const placeholders = statuses.map(() => '?').join(',');
+  const sql = barberFilter !== null
+    ? `SELECT COUNT(*) AS c FROM appointments
+        WHERE status IN (${placeholders}) AND barber_id = ?
+          AND starts_at >= ? AND starts_at < ?`
+    : `SELECT COUNT(*) AS c FROM appointments
+        WHERE status IN (${placeholders})
+          AND starts_at >= ? AND starts_at < ?`;
+  const stmt = sqlite.prepare(sql);
+  const args = barberFilter !== null
+    ? [...statuses, barberFilter, startIso, endIso]
+    : [...statuses, startIso, endIso];
+  return (stmt.get(...args) as { c: number }).c;
+}
+
+const revenueToday  = sumRevenue(todayStartUtc, todayEndUtc);
+const revenueWeek   = sumRevenue(weekStartUtc, weekEndUtc);
+const revenueMonth  = sumRevenue(monthStartUtc, monthEndUtc);
+
+const countToday    = countAppts(todayStartUtc, todayEndUtc, ['confirmed', 'completed']);
+const countWeek     = countAppts(weekStartUtc, weekEndUtc, ['confirmed', 'completed']);
+const countMonth    = countAppts(monthStartUtc, monthEndUtc, ['confirmed', 'completed']);
+
+// ─── Próximos agendamentos (próximas 48h, confirmed) ──────────────────────
+const next48hEndUtc = new Date(nowUtc.getTime() + 48 * 60 * 60 * 1000).toISOString();
+const upcomingRows = (barberFilter !== null
+  ? db.select({
+      id: appointments.id, startsAt: appointments.startsAt, customerName: appointments.customerName,
+      serviceName: services.name, barberName: barbers.name, priceCents: appointments.priceCents,
+    })
+    .from(appointments)
+    .innerJoin(services, eq(services.id, appointments.serviceId))
+    .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
+    .where(and(
+      eq(appointments.status, 'confirmed'),
+      eq(appointments.barberId, barberFilter),
+      gte(appointments.startsAt, nowUtc.toISOString()),
+      lt(appointments.startsAt, next48hEndUtc),
+    ))
+    .orderBy(appointments.startsAt)
+    .limit(8)
+    .all()
+  : db.select({
+      id: appointments.id, startsAt: appointments.startsAt, customerName: appointments.customerName,
+      serviceName: services.name, barberName: barbers.name, priceCents: appointments.priceCents,
+    })
+    .from(appointments)
+    .innerJoin(services, eq(services.id, appointments.serviceId))
+    .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
+    .where(and(
+      eq(appointments.status, 'confirmed'),
+      gte(appointments.startsAt, nowUtc.toISOString()),
+      lt(appointments.startsAt, next48hEndUtc),
+    ))
+    .orderBy(appointments.startsAt)
+    .limit(8)
+    .all());
+
+// ─── Alertas: atrasados (passou da hora, ainda confirmed, é hoje) ──────────
+const lateRows = (barberFilter !== null
+  ? db.select({
+      id: appointments.id, startsAt: appointments.startsAt, customerName: appointments.customerName,
+      serviceName: services.name, barberName: barbers.name,
+    })
+    .from(appointments)
+    .innerJoin(services, eq(services.id, appointments.serviceId))
+    .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
+    .where(and(
+      eq(appointments.status, 'confirmed'),
+      eq(appointments.barberId, barberFilter),
+      gte(appointments.startsAt, todayStartUtc),
+      lt(appointments.startsAt, nowUtc.toISOString()),
+    ))
+    .orderBy(appointments.startsAt)
+    .all()
+  : db.select({
+      id: appointments.id, startsAt: appointments.startsAt, customerName: appointments.customerName,
+      serviceName: services.name, barberName: barbers.name,
+    })
+    .from(appointments)
+    .innerJoin(services, eq(services.id, appointments.serviceId))
+    .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
+    .where(and(
+      eq(appointments.status, 'confirmed'),
+      gte(appointments.startsAt, todayStartUtc),
+      lt(appointments.startsAt, nowUtc.toISOString()),
+    ))
+    .orderBy(appointments.startsAt)
+    .all());
+
+// ─── No-shows nos últimos 7 dias ──────────────────────────────────────────
+const noShowRows = (barberFilter !== null
+  ? db.select({
+      id: appointments.id, startsAt: appointments.startsAt, customerName: appointments.customerName,
+      serviceName: services.name, priceCents: appointments.priceCents,
+    })
+    .from(appointments)
+    .innerJoin(services, eq(services.id, appointments.serviceId))
+    .where(and(
+      eq(appointments.status, 'no_show'),
+      eq(appointments.barberId, barberFilter),
+      gte(appointments.startsAt, sevenDaysAgo),
+    ))
+    .orderBy(desc(appointments.startsAt))
+    .limit(5)
+    .all()
+  : db.select({
+      id: appointments.id, startsAt: appointments.startsAt, customerName: appointments.customerName,
+      serviceName: services.name, priceCents: appointments.priceCents,
+    })
+    .from(appointments)
+    .innerJoin(services, eq(services.id, appointments.serviceId))
+    .where(and(
+      eq(appointments.status, 'no_show'),
+      gte(appointments.startsAt, sevenDaysAgo),
+    ))
+    .orderBy(desc(appointments.startsAt))
+    .limit(5)
+    .all());
+
+// ─── Receita por dia da semana atual (pra gráfico) ────────────────────────
+interface DayBar { day: string; label: string; weekday: string; revenue: number; isToday: boolean; }
+const WEEKDAYS_SHORT = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+const weekDays: DayBar[] = [];
+for (let i = 0; i < 7; i++) {
+  const dayStr = addDaysStr(mondayStr, i);
+  const dayStartUtc = fromZonedTime(`${dayStr}T00:00:00`, TZ).toISOString();
+  const dayEndUtc   = fromZonedTime(`${addDaysStr(dayStr, 1)}T00:00:00`, TZ).toISOString();
+  const r = sumRevenue(dayStartUtc, dayEndUtc);
+  weekDays.push({
+    day:     dayStr,
+    label:   String(parseInt(dayStr.slice(-2), 10)),
+    weekday: WEEKDAYS_SHORT[i],
+    revenue: r,
+    isToday: dayStr === todayStr,
+  });
+}
+const maxRevenue = Math.max(...weekDays.map(d => d.revenue), 1);
+
+// ─── Helpers de display ───────────────────────────────────────────────────
+const fmtMoney = (cents: number) => `R$ ${(cents / 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
+const fmtTime  = (iso: string) => formatInTimeZone(new Date(iso), TZ, 'HH:mm');
+const fmtDate  = (iso: string) => formatInTimeZone(new Date(iso), TZ, "dd 'de' MMM");
+
+const upcomingFmt = upcomingRows.map(a => ({
+  ...a,
+  timeLabel:  fmtTime(a.startsAt),
+  dateLabel:  fmtDate(a.startsAt),
+  isToday:    a.startsAt >= todayStartUtc && a.startsAt < todayEndUtc,
+  price:      fmtMoney(a.priceCents),
+}));
+const lateFmt = lateRows.map(a => ({
+  ...a,
+  timeLabel: fmtTime(a.startsAt),
+  minutesLate: Math.floor((nowUtc.getTime() - new Date(a.startsAt).getTime()) / 60000),
+}));
+const noShowFmt = noShowRows.map(a => ({
+  ...a,
+  timeLabel: fmtTime(a.startsAt),
+  dateLabel: fmtDate(a.startsAt),
+  price:     fmtMoney(a.priceCents),
+}));
+
+const lostToNoShow = noShowFmt.reduce((s, a) => s + a.priceCents, 0);
 ---
+
+<AdminLayout title="Início" barberName={barberRow.name} role={session.role}>
+
+  <main class="max-w-5xl mx-auto px-4 py-6 space-y-6 pb-20">
+
+    <!-- Header / atalho agenda -->
+    <section class="bg-gradient-to-br from-teal/10 via-dark-card to-dark-card border border-teal/15 rounded-lg p-5 sm:p-6">
+      <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <p class="text-xs text-neutral-500 uppercase tracking-widest">Olá, {barberRow.name.split(' ')[0]}</p>
+          <h1 class="font-serif text-2xl sm:text-3xl font-medium text-neutral-50 mt-1">
+            {countToday === 0 ? 'Sem agendamentos hoje' :
+             countToday === 1 ? '1 agendamento hoje' :
+             `${countToday} agendamentos hoje`}
+          </h1>
+          <p class="text-sm text-neutral-400 mt-1">
+            Receita prevista: <span class="text-teal-light font-medium">{fmtMoney(revenueToday)}</span>
+          </p>
+        </div>
+        <a href={`/admin/dia/${todayStr}`}
+           class="inline-flex items-center gap-2 bg-teal hover:bg-teal-hover text-white text-sm font-bold uppercase tracking-widest px-5 py-3 rounded-md transition-colors shrink-0">
+          Ver agenda de hoje
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+          </svg>
+        </a>
+      </div>
+    </section>
+
+    <!-- Cards receita semana/mês -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+        <p class="text-[10px] text-neutral-500 uppercase tracking-widest">Esta semana</p>
+        <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{fmtMoney(revenueWeek)}</p>
+        <p class="text-xs text-neutral-500 mt-0.5">
+          {countWeek} {countWeek === 1 ? 'agendamento' : 'agendamentos'}
+        </p>
+      </div>
+      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+        <p class="text-[10px] text-neutral-500 uppercase tracking-widest">Este mês</p>
+        <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{fmtMoney(revenueMonth)}</p>
+        <p class="text-xs text-neutral-500 mt-0.5">
+          {countMonth} {countMonth === 1 ? 'agendamento' : 'agendamentos'}
+        </p>
+      </div>
+    </section>
+
+    <!-- Gráfico semana -->
+    <section class="bg-dark-card border border-white/5 rounded-lg p-5">
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Receita esta semana</p>
+        <p class="text-[10px] text-neutral-600">
+          {mondayStr.split('-').reverse().slice(0, 2).join('/')} — {addDaysStr(mondayStr, 6).split('-').reverse().slice(0, 2).join('/')}
+        </p>
+      </div>
+      <div class="flex items-end gap-2 h-32">
+        {weekDays.map(d => {
+          const heightPct = d.revenue > 0 ? Math.max(8, (d.revenue / maxRevenue) * 100) : 2;
+          return (
+            <div class="flex-1 flex flex-col items-center gap-2 group">
+              <div class="relative w-full flex items-end" style="height: 100%;">
+                <div class:list={[
+                  'w-full rounded-t transition-all',
+                  d.revenue > 0 ? (d.isToday ? 'bg-teal' : 'bg-teal/40') : 'bg-white/5',
+                  d.isToday && 'ring-1 ring-teal/50'
+                ]} style={`height: ${heightPct}%`}>
+                  {d.revenue > 0 && (
+                    <span class="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] text-neutral-400 tabular-nums whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
+                      {fmtMoney(d.revenue)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div class="text-center">
+                <p class:list={['text-[10px] uppercase tracking-wider',
+                  d.isToday ? 'text-teal-light font-bold' : 'text-neutral-500']}>{d.weekday}</p>
+                <p class:list={['text-[10px] tabular-nums',
+                  d.isToday ? 'text-teal-light' : 'text-neutral-600']}>{d.label}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+
+    <!-- Alertas -->
+    {(lateFmt.length > 0 || noShowFmt.length > 0) && (
+      <section class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {lateFmt.length > 0 && (
+          <div class="bg-red-950/20 border border-red-500/20 rounded-lg p-4">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="w-1.5 h-1.5 bg-red-400 rounded-full animate-pulse"></span>
+              <p class="text-[10px] text-red-300 uppercase tracking-widest font-medium">
+                {lateFmt.length} {lateFmt.length === 1 ? 'atrasado' : 'atrasados'}
+              </p>
+            </div>
+            <div class="space-y-2">
+              {lateFmt.map(l => (
+                <a href={`/admin/dia/${todayStr}#appt-${l.id}`}
+                   class="block bg-dark-card/50 hover:bg-dark-card border border-white/5 rounded p-2 text-xs transition-colors">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="text-neutral-200 font-medium truncate">{l.customerName}</p>
+                      <p class="text-neutral-500 text-[10px] truncate">{l.serviceName} · {l.barberName.split(' ')[0]}</p>
+                    </div>
+                    <div class="text-right shrink-0">
+                      <p class="text-red-400 font-bold tabular-nums">{l.timeLabel}</p>
+                      <p class="text-neutral-600 text-[10px]">+{l.minutesLate}min</p>
+                    </div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+        {noShowFmt.length > 0 && (
+          <div class="bg-amber-950/15 border border-amber-500/20 rounded-lg p-4">
+            <div class="flex items-center justify-between gap-2 mb-3">
+              <p class="text-[10px] text-amber-300 uppercase tracking-widest font-medium">
+                No-shows · últimos 7 dias
+              </p>
+              <p class="text-[10px] text-amber-300/70 tabular-nums">{fmtMoney(lostToNoShow)} perdidos</p>
+            </div>
+            <div class="space-y-2">
+              {noShowFmt.map(n => (
+                <div class="bg-dark-card/50 border border-white/5 rounded p-2 text-xs">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="text-neutral-300 truncate">{n.customerName}</p>
+                      <p class="text-neutral-600 text-[10px] truncate">{n.serviceName}</p>
+                    </div>
+                    <div class="text-right shrink-0">
+                      <p class="text-neutral-400 tabular-nums">{n.dateLabel}</p>
+                      <p class="text-neutral-600 text-[10px]">{n.price}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+    )}
+
+    <!-- Próximos -->
+    <section>
+      <p class="text-xs text-neutral-500 uppercase tracking-widest mb-3">
+        Próximos {upcomingFmt.length > 0 && `(${upcomingFmt.length})`}
+      </p>
+      {upcomingFmt.length === 0 ? (
+        <div class="bg-dark-card border border-white/5 rounded-lg p-8 text-center">
+          <p class="text-neutral-500 text-sm">Nenhum agendamento nas próximas 48h.</p>
+        </div>
+      ) : (
+        <div class="space-y-2">
+          {upcomingFmt.map(a => {
+            const path = formatInTimeZone(new Date(a.startsAt), TZ, 'yyyy-MM-dd');
+            return (
+              <a href={`/admin/dia/${path}#appt-${a.id}`}
+                 class="block bg-dark-card border border-white/5 hover:border-teal/30 rounded-md p-3 transition-colors">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <div class="text-center min-w-[3rem] shrink-0">
+                      <p class="text-base font-bold text-teal-light tabular-nums leading-none">{a.timeLabel}</p>
+                      <p class="text-[10px] text-neutral-600 mt-0.5">{a.isToday ? 'Hoje' : a.dateLabel}</p>
+                    </div>
+                    <div class="min-w-0">
+                      <p class="text-sm font-medium text-neutral-100 truncate">{a.customerName}</p>
+                      <p class="text-xs text-neutral-500 truncate">{a.serviceName} · {a.barberName.split(' ')[0]}</p>
+                    </div>
+                  </div>
+                  <span class="text-sm font-semibold text-neutral-400 tabular-nums shrink-0">{a.price}</span>
+                </div>
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </section>
+
+  </main>
+</AdminLayout>

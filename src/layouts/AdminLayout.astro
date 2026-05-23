@@ -46,6 +46,7 @@ const path = Astro.url.pathname;
       <div class="max-w-3xl mx-auto flex gap-1 overflow-x-auto">
         {[
           { href: '/admin',           label: 'Dia',       active: path.startsWith('/admin/dia') || path === '/admin' },
+          { href: '/admin/buscar',    label: 'Buscar',    active: path === '/admin/buscar' },
           { href: '/admin/servicos',  label: 'Serviços',  active: path === '/admin/servicos' },
           ...(role === 'admin' ? [{ href: '/admin/catalogo', label: 'Catálogo', active: path === '/admin/catalogo' }] : []),
           { href: '/admin/bloqueios', label: 'Bloqueios', active: path === '/admin/bloqueios' },

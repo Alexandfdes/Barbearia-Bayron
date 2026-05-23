@@ -54,6 +54,7 @@ export const appointments = sqliteTable('appointments', {
   serviceId: integer('service_id').notNull().references(() => services.id),
   customerName: text('customer_name').notNull(),
   customerPhone: text('customer_phone').notNull(),
+  customerBirthdate: text('customer_birthdate'), // 'YYYY-MM-DD'; nullable pra registros antigos
   startsAt: text('starts_at').notNull(), // timestamp UTC ISO string
   endsAt: text('ends_at').notNull(),
   durationMinutes: integer('duration_minutes').notNull(), // snapshot no booking
@@ -67,6 +68,11 @@ export const appointments = sqliteTable('appointments', {
   notes: text('notes'),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
   createdBy: text('created_by', { enum: ['customer', 'barber'] }).notNull().default('customer'),
+  /** Quem fez a última modificação (cancel/reschedule/notes/customer edit) */
+  lastModifiedById: integer('last_modified_by_id').references(() => barbers.id),
+  lastModifiedAt:   text('last_modified_at'),
+  /** Chave de idempotência pra evitar duplo booking */
+  idempotencyKey:   text('idempotency_key'),
 }, (table) => [
   index('appt_barber_date_idx').on(table.barberId, table.startsAt),
   index('appt_phone_idx').on(table.customerPhone),

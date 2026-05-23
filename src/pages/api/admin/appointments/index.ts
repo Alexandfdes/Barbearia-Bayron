@@ -13,11 +13,13 @@ import { bookAppointment } from '../../../../lib/bookAppointment.js';
 const TZ = 'America/Fortaleza';
 
 const createSchema = z.object({
-  barberId:      z.number().int().positive(),
-  serviceId:     z.number().int().positive(),
-  customerName:  z.string().min(2).max(100),
-  customerPhone: z.string().min(8).max(20),
-  startsAt:      z.string().refine(s => !isNaN(new Date(s).getTime()), 'Data/hora inválida'),
+  barberId:          z.number().int().positive(),
+  serviceId:         z.number().int().positive(),
+  customerName:      z.string().min(2).max(100),
+  customerPhone:     z.string().min(8).max(20),
+  // Barbeiro pode criar sem birthdate (cliente pode não querer informar no balcão)
+  customerBirthdate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  startsAt:          z.string().refine(s => !isNaN(new Date(s).getTime()), 'Data/hora inválida'),
 });
 
 export const GET: APIRoute = async ({ request, url }) => {
@@ -88,7 +90,7 @@ export const POST: APIRoute = async ({ request }) => {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return json({ error: parsed.error.issues[0].message }, 400);
 
-  const { barberId, serviceId, customerName, customerPhone, startsAt: startsAtStr } = parsed.data;
+  const { barberId, serviceId, customerName, customerPhone, customerBirthdate, startsAt: startsAtStr } = parsed.data;
 
   if (session.role !== 'admin' && barberId !== session.barberId) {
     return json({ error: 'Sem permissão para este barbeiro' }, 403);
@@ -97,7 +99,16 @@ export const POST: APIRoute = async ({ request }) => {
   const startsAt = new Date(startsAtStr);
 
   try {
-    const result = bookAppointment({ barberId, serviceId, customerName, customerPhone, startsAt, createdBy: 'barber' });
+    const result = bookAppointment({
+      barberId,
+      serviceId,
+      customerName,
+      customerPhone,
+      customerBirthdate: customerBirthdate ?? null,
+      startsAt,
+      createdBy: 'barber',
+      idempotencyKey: null,
+    });
     if (!result.ok) return json({ error: result.error }, result.httpStatus);
     return json(result, 201);
   } catch (err) {

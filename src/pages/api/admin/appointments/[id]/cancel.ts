@@ -30,11 +30,14 @@ export const POST: APIRoute = async ({ request, params }) => {
     return json({ error: `Não pode cancelar (status: ${appt.status})` }, 409);
   }
 
+  const now = new Date().toISOString();
   db.update(appointments)
     .set({
-      status:      'cancelled',
-      cancelledAt: new Date().toISOString(),
-      cancelledBy: session.role === 'admin' ? 'admin' : 'barber',
+      status:           'cancelled',
+      cancelledAt:      now,
+      cancelledBy:      session.role === 'admin' ? 'admin' : 'barber',
+      lastModifiedById: session.barberId,
+      lastModifiedAt:   now,
     })
     .where(and(eq(appointments.id, id), eq(appointments.status, 'confirmed')))
     .run();

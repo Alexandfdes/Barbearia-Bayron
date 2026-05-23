@@ -62,6 +62,14 @@ let selBarber: BarberOption | null = null;
 let selDate = '';
 let loadedSlots: SlotInfo[] = [];
 let selSlot: SlotInfo | null = null;
+// Chave de idempotência: gerada UMA vez quando o user chega no step 4.
+// Se ele clicar duas vezes no Confirmar, ambos POSTs mandam a mesma chave
+// e o backend retorna o mesmo agendamento (sem criar duplicata).
+let idempotencyKey: string | null = null;
+function generateIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
 
 // ── Elementos ─────────────────────────────────────────────────────────────────
 const wizard  = document.getElementById('wizard')!;
@@ -272,6 +280,10 @@ async function loadSlots(date: string) {
 function renderStep4() {
   if (!selService || !selBarber || !selSlot) return;
   setProgress(4);
+  // Gera nova chave de idempotência sempre que entra (ou re-entra) no step 4.
+  // Se o user voltar pra step 3 e mudar de slot, a chave anterior fica desatualizada
+  // e seria descartada de qualquer forma porque o slot mudou.
+  idempotencyKey = generateIdempotencyKey();
 
   const [y, m, d] = selDate.split('-');
   const dateDisp = `${d}/${m}/${y}`;
@@ -317,6 +329,15 @@ function renderStep4() {
           class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm"
           required />
       </div>
+      <div>
+        <label class="block text-sm text-neutral-400 mb-1.5">
+          Data de nascimento <span class="text-neutral-600 font-normal">(para acessar seus agendamentos depois)</span>
+        </label>
+        <input id="inp-birthdate" type="text" inputmode="numeric" autocomplete="bday"
+          placeholder="dd/mm/aaaa" maxlength="10"
+          class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm tabular-nums"
+          required />
+      </div>
 
       <p id="form-error" class="hidden text-red-400 text-sm"></p>
 
@@ -329,19 +350,53 @@ function renderStep4() {
     ${backBtn(3, 'Alterar horário')}`;
 
   wizard.querySelector('#booking-form')!.addEventListener('submit', handleSubmit);
+
+  // Máscara dd/mm/aaaa no campo de data de nascimento
+  const bd = document.getElementById('inp-birthdate') as HTMLInputElement | null;
+  if (bd) {
+    bd.addEventListener('input', () => {
+      const d = bd.value.replace(/\D/g, '').slice(0, 8);
+      if (d.length === 0)      bd.value = '';
+      else if (d.length <= 2)  bd.value = d;
+      else if (d.length <= 4)  bd.value = `${d.slice(0, 2)}/${d.slice(2)}`;
+      else                     bd.value = `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+    });
+  }
+
   // Foca no campo nome
   requestAnimationFrame(() => (document.getElementById('inp-name') as HTMLInputElement)?.focus());
 }
 
+// Converte dd/mm/aaaa pra YYYY-MM-DD; retorna null se inválido ou fora da faixa (5–100 anos).
+function parseBirthdate(raw: string): string | null {
+  const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const dd = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  const yyyy = parseInt(m[3], 10);
+  if (mm < 1 || mm > 12) return null;
+  const dt = new Date(yyyy, mm - 1, dd);
+  if (dt.getFullYear() !== yyyy || dt.getMonth() !== mm - 1 || dt.getDate() !== dd) return null;
+  const now = new Date();
+  const min = new Date(now.getFullYear() - 100, now.getMonth(), now.getDate());
+  const max = new Date(now.getFullYear() - 5,   now.getMonth(), now.getDate());
+  if (dt < min || dt > max) return null;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${yyyy}-${pad(mm)}-${pad(dd)}`;
+}
+
 async function handleSubmit(e: Event) {
   e.preventDefault();
-  const name  = (document.getElementById('inp-name')  as HTMLInputElement).value.trim();
-  const phone = (document.getElementById('inp-phone') as HTMLInputElement).value.trim();
+  const name      = (document.getElementById('inp-name')      as HTMLInputElement).value.trim();
+  const phone     = (document.getElementById('inp-phone')     as HTMLInputElement).value.trim();
+  const birthdateRaw = (document.getElementById('inp-birthdate') as HTMLInputElement).value;
+  const birthdate = parseBirthdate(birthdateRaw);
   const errEl  = document.getElementById('form-error')!;
   const btn    = document.getElementById('submit-btn') as HTMLButtonElement;
 
   if (name.length < 2)  { errEl.textContent = 'Nome muito curto (mínimo 2 letras)'; errEl.classList.remove('hidden'); return; }
   if (!/^\d{10,11}$/.test(phone.replace(/\D/g, ''))) { errEl.textContent = 'WhatsApp inválido (DDD + número)'; errEl.classList.remove('hidden'); return; }
+  if (!birthdate) { errEl.textContent = 'Data de nascimento inválida. Use o formato dd/mm/aaaa.'; errEl.classList.remove('hidden'); return; }
 
   errEl.classList.add('hidden');
   btn.disabled = true;
@@ -352,11 +407,13 @@ async function handleSubmit(e: Event) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        barberId:      selBarber!.id,
-        serviceId:     selService!.id,
-        customerName:  name,
-        customerPhone: phone,
-        startsAt:      selSlot!.utc,
+        barberId:          selBarber!.id,
+        serviceId:         selService!.id,
+        customerName:      name,
+        customerPhone:     phone,
+        customerBirthdate: birthdate,
+        startsAt:          selSlot!.utc,
+        idempotencyKey:    idempotencyKey,
       }),
     });
     const data = await res.json();

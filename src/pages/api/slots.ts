@@ -9,9 +9,10 @@ import { getAvailableSlots } from '../../lib/slots.js';
 const TZ = 'America/Fortaleza';
 
 const querySchema = z.object({
-  barberId:  z.coerce.number().int().positive(),
-  serviceId: z.coerce.number().int().positive(),
-  date:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve ser YYYY-MM-DD'),
+  barberId:             z.coerce.number().int().positive(),
+  serviceId:            z.coerce.number().int().positive(),
+  date:                 z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve ser YYYY-MM-DD'),
+  excludeAppointmentId: z.coerce.number().int().positive().optional(),
 });
 
 function json(body: unknown, status = 200) {
@@ -24,16 +25,17 @@ function json(body: unknown, status = 200) {
 export const GET: APIRoute = ({ request }) => {
   const url = new URL(request.url);
   const parsed = querySchema.safeParse({
-    barberId:  url.searchParams.get('barberId'),
-    serviceId: url.searchParams.get('serviceId'),
-    date:      url.searchParams.get('date'),
+    barberId:             url.searchParams.get('barberId'),
+    serviceId:            url.searchParams.get('serviceId'),
+    date:                 url.searchParams.get('date'),
+    excludeAppointmentId: url.searchParams.get('excludeAppointmentId') ?? undefined,
   });
 
   if (!parsed.success) {
     return json({ error: parsed.error.issues[0].message }, 400);
   }
 
-  const { barberId, serviceId, date } = parsed.data;
+  const { barberId, serviceId, date, excludeAppointmentId } = parsed.data;
 
   const now        = new Date();
   const todayStr   = formatInTimeZone(now, TZ, 'yyyy-MM-dd');
@@ -43,7 +45,7 @@ export const GET: APIRoute = ({ request }) => {
   if (date > maxDateStr) return json({ error: 'Data além do limite de 30 dias' }, 400);
 
   try {
-    const slots = getAvailableSlots(barberId, serviceId, date);
+    const slots = getAvailableSlots(barberId, serviceId, date, excludeAppointmentId);
 
     return json({
       date,

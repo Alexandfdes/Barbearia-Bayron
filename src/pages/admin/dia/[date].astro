@@ -4,11 +4,19 @@ export const prerender = false;
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import { getSession } from '../../../lib/session.js';
 import { db } from '../../../db/index.js';
-import { appointments, barbers, services } from '../../../db/schema.js';
-import { eq, and, gte, lt } from 'drizzle-orm';
+import { appointments, barbers, services, timeOff } from '../../../db/schema.js';
+import { eq, and, gte, lt, or, isNull } from 'drizzle-orm';
 import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 
 const TZ = 'America/Fortaleza';
+
+// Janela da timeline (hardcoded por enquanto — pode virar dinâmico via working_hours depois).
+const START_HOUR = 8;
+const END_HOUR   = 19;
+const TOTAL_HOURS = END_HOUR - START_HOUR;
+// Altura visual de 1 hora controlada por CSS var pra responsividade.
+// Veja <style> no template e media query mobile.
+// JS lê de getComputedStyle quando precisa (click no buraco).
 
 const session = await getSession(Astro.request);
 if (!session) return Astro.redirect('/admin/login');
@@ -18,13 +26,10 @@ if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
   return Astro.redirect('/admin');
 }
 
-// Barber info for header
 const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
   .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
-
 if (!barberRow) return Astro.redirect('/admin/login');
 
-// Filter by barber
 const barberParam = Astro.url.searchParams.get('barber');
 let filterBarberId: number | null = null;
 if (session.role === 'admin') {
@@ -36,24 +41,26 @@ if (session.role === 'admin') {
   filterBarberId = session.barberId;
 }
 
-// Date range
 const dayStart = fromZonedTime(`${date}T00:00:00`, TZ).toISOString();
 const dayEnd   = fromZonedTime(`${date}T23:59:59`, TZ).toISOString();
 
-// Load appointments
 const apptRows = db
   .select({
-    id:              appointments.id,
-    status:          appointments.status,
-    startsAt:        appointments.startsAt,
-    endsAt:          appointments.endsAt,
-    durationMinutes: appointments.durationMinutes,
-    priceCents:      appointments.priceCents,
-    customerName:    appointments.customerName,
-    customerPhone:   appointments.customerPhone,
-    barberId:        appointments.barberId,
-    barberName:      barbers.name,
-    serviceName:     services.name,
+    id:                appointments.id,
+    status:            appointments.status,
+    startsAt:          appointments.startsAt,
+    endsAt:            appointments.endsAt,
+    durationMinutes:   appointments.durationMinutes,
+    priceCents:        appointments.priceCents,
+    customerName:      appointments.customerName,
+    customerPhone:     appointments.customerPhone,
+    customerBirthdate: appointments.customerBirthdate,
+    notes:             appointments.notes,
+    lastModifiedById:  appointments.lastModifiedById,
+    lastModifiedAt:    appointments.lastModifiedAt,
+    barberId:          appointments.barberId,
+    barberName:        barbers.name,
+    serviceName:       services.name,
   })
   .from(appointments)
   .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
@@ -66,24 +73,184 @@ const apptRows = db
   .orderBy(appointments.startsAt)
   .all();
 
-// Load all active barbers (for admin filter tabs)
 const allBarbers = session.role === 'admin'
   ? db.select({ id: barbers.id, name: barbers.name }).from(barbers).where(eq(barbers.active, true)).all()
   : [];
 
-// Format appointments
+// Map id→nome de TODOS os barbeiros (ativos + inativos), pra mostrar quem modificou
+// mesmo que tenha sido um barbeiro hoje desativado
+const barberNameById = new Map<number, string>(
+  db.select({ id: barbers.id, name: barbers.name }).from(barbers).all().map(b => [b.id, b.name])
+);
+
+// Bloqueios (time_off) que tocam o dia. Filtra por barbeiro respeitando a regra:
+// barber_id NULL = feriado pra todos.
+const timeOffRows = db
+  .select({
+    id:       timeOff.id,
+    startsAt: timeOff.startsAt,
+    endsAt:   timeOff.endsAt,
+    reason:   timeOff.reason,
+    barberId: timeOff.barberId,
+  })
+  .from(timeOff)
+  .where(
+    filterBarberId !== null
+      ? and(
+          lt(timeOff.startsAt, dayEnd),
+          gte(timeOff.endsAt, dayStart),
+          or(eq(timeOff.barberId, filterBarberId), isNull(timeOff.barberId))
+        )
+      : and(
+          lt(timeOff.startsAt, dayEnd),
+          gte(timeOff.endsAt, dayStart)
+        )
+  )
+  .orderBy(timeOff.startsAt)
+  .all();
+
 const nowUtc = new Date();
-const apptList = apptRows.map(a => ({
-  ...a,
-  timeLocal:    formatInTimeZone(new Date(a.startsAt), TZ, 'HH:mm'),
-  endTimeLocal: formatInTimeZone(new Date(a.endsAt),   TZ, 'HH:mm'),
-  price:        `R$ ${(a.priceCents / 100).toFixed(0)}`,
-}));
 
-// First confirmed appointment that hasn't ended yet
-const nextAppt = apptList.find(a => a.status === 'confirmed' && new Date(a.endsAt) > nowUtc) ?? null;
+// Calcula tudo que a timeline precisa por agendamento
+interface ApptView {
+  id: number;
+  status: string;
+  durationMinutes: number;
+  priceCents: number;
+  customerName: string;
+  customerPhone: string;
+  customerPhoneDisplay: string;
+  customerBirthdate: string | null;
+  notes: string | null;
+  lastModifiedLabel: string | null;
+  barberName: string;
+  barberId: number;
+  serviceName: string;
+  timeLocal: string;
+  endTimeLocal: string;
+  price: string;
+  topMin: number;
+  durationMin: number;
+  whatsappUrl: string;
+  telUrl: string;
+  isPast: boolean;
+  isLate: boolean;
+}
 
-// Day navigation helpers
+interface BlockView {
+  id: number;
+  reason: string;
+  topMin: number;
+  durationMin: number;
+  timeLocal: string;
+  endTimeLocal: string;
+}
+
+function buildWhatsappUrl(phone: string, name: string, time: string, dateStr: string): string {
+  const digits  = (phone ?? '').replace(/\D/g, '');
+  const withDDI = digits.startsWith('55') ? digits : `55${digits}`;
+  const first   = (name ?? '').split(' ')[0] || 'cliente';
+  const todayStr = formatInTimeZone(new Date(), TZ, 'yyyy-MM-dd');
+  const dia = dateStr === todayStr ? 'hoje' : `dia ${dateStr.split('-').reverse().slice(0, 2).join('/')}`;
+  const msg = `Olá ${first}, aqui da Barbearia Bayron — lembrando do seu horário ${dia} às ${time}. Qualquer coisa é só me chamar!`;
+  return `https://wa.me/${withDDI}?text=${encodeURIComponent(msg)}`;
+}
+
+function formatPhoneDisplay(phone: string): string {
+  const d = (phone ?? '').replace(/\D/g, '').slice(-11);
+  if (d.length === 11) return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+  return phone;
+}
+
+// Calcula topMin/durationMin pra qualquer faixa de horário tocando este dia.
+// O posicionamento visual é feito em CSS via calc(var(--hour-px) * topMin / 60).
+function timelinePos(startsAtUtc: string, endsAtUtc: string) {
+  const sLocal = formatInTimeZone(new Date(startsAtUtc), TZ, 'yyyy-MM-dd HH:mm');
+  const eLocal = formatInTimeZone(new Date(endsAtUtc),   TZ, 'yyyy-MM-dd HH:mm');
+  const sParts = sLocal.split(' ')[1].split(':').map(Number);
+  const eParts = eLocal.split(' ')[1].split(':').map(Number);
+  const sIsBefore = sLocal.split(' ')[0] < date;
+  const eIsAfter  = eLocal.split(' ')[0] > date;
+  const sMin = sIsBefore ? 0 : Math.max(0, (sParts[0] - START_HOUR) * 60 + sParts[1]);
+  const eMin = eIsAfter ? TOTAL_HOURS * 60 : Math.min(TOTAL_HOURS * 60, (eParts[0] - START_HOUR) * 60 + eParts[1]);
+  return {
+    topMin:      sMin,
+    durationMin: Math.max(0, eMin - sMin),
+  };
+}
+
+const apptList: ApptView[] = apptRows.map(a => {
+  const pos = timelinePos(a.startsAt, a.endsAt);
+  const time     = formatInTimeZone(new Date(a.startsAt), TZ, 'HH:mm');
+  const endTime  = formatInTimeZone(new Date(a.endsAt),   TZ, 'HH:mm');
+  const digits   = (a.customerPhone ?? '').replace(/\D/g, '');
+  const telDigits = digits.startsWith('55') ? digits : `55${digits}`;
+
+  return {
+    id:              a.id,
+    status:          a.status,
+    durationMinutes: a.durationMinutes,
+    priceCents:      a.priceCents,
+    customerName:    a.customerName,
+    customerPhone:   a.customerPhone,
+    customerPhoneDisplay: formatPhoneDisplay(a.customerPhone),
+    customerBirthdate: a.customerBirthdate,
+    notes:           a.notes,
+    lastModifiedLabel: a.lastModifiedAt && a.lastModifiedById
+      ? `${barberNameById.get(a.lastModifiedById) ?? '—'} · ${formatInTimeZone(new Date(a.lastModifiedAt), TZ, "dd/MM 'às' HH:mm")}`
+      : null,
+    barberName:      a.barberName,
+    barberId:        a.barberId,
+    serviceName:     a.serviceName,
+    timeLocal:       time,
+    endTimeLocal:    endTime,
+    price:           `R$ ${(a.priceCents / 100).toFixed(0)}`,
+    topMin:          pos.topMin,
+    durationMin:     pos.durationMin,
+    whatsappUrl:     buildWhatsappUrl(a.customerPhone, a.customerName, time, date),
+    telUrl:          `tel:+${telDigits}`,
+    isPast:          new Date(a.endsAt) <= nowUtc,
+    isLate:          a.status === 'confirmed' && new Date(a.startsAt) < nowUtc,
+  };
+});
+
+const blockList: BlockView[] = timeOffRows.map(b => {
+  const pos = timelinePos(b.startsAt, b.endsAt);
+  return {
+    id:           b.id,
+    reason:       b.reason ?? 'Bloqueado',
+    topMin:       pos.topMin,
+    durationMin:  pos.durationMin,
+    timeLocal:    formatInTimeZone(new Date(b.startsAt), TZ, 'HH:mm'),
+    endTimeLocal: formatInTimeZone(new Date(b.endsAt),   TZ, 'HH:mm'),
+  };
+}).filter(b => b.durationMin > 0);
+
+// Receita prevista: confirmed + completed (não conta cancelled nem no_show)
+const revenueCents = apptRows
+  .filter(a => a.status === 'confirmed' || a.status === 'completed')
+  .reduce((sum, a) => sum + a.priceCents, 0);
+const revenueLabel = `R$ ${(revenueCents / 100).toFixed(0)}`;
+const revenueCount = apptRows.filter(a => a.status === 'confirmed' || a.status === 'completed').length;
+
+// Próximo agendamento (confirmed que ainda não acabou)
+const nextAppt = apptList.find(a => a.status === 'confirmed' && !a.isPast) ?? null;
+
+// Linha "Agora" (em minutos desde START_HOUR)
+const todayStr = formatInTimeZone(new Date(), TZ, 'yyyy-MM-dd');
+const isToday  = date === todayStr;
+let nowTopMin: number | null = null;
+if (isToday) {
+  const nowHm = formatInTimeZone(nowUtc, TZ, 'HH:mm');
+  const [nh, nm] = nowHm.split(':').map(Number);
+  const minutesFromStart = (nh - START_HOUR) * 60 + nm;
+  if (minutesFromStart >= 0 && minutesFromStart <= TOTAL_HOURS * 60) {
+    nowTopMin = minutesFromStart;
+  }
+}
+
+// Day navigation
 function offsetDate(d: string, days: number): string {
   const [y, mo, day] = d.split('-').map(Number);
   const dt = new Date(Date.UTC(y, mo - 1, day + days, 12));
@@ -91,10 +258,7 @@ function offsetDate(d: string, days: number): string {
 }
 const prevDate = offsetDate(date, -1);
 const nextDate = offsetDate(date, 1);
-const todayStr = formatInTimeZone(new Date(), TZ, 'yyyy-MM-dd');
-const isToday  = date === todayStr;
 
-// Formatted date header
 const MONTHS   = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const WEEKDAYS = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
 const [y, m, d] = date.split('-').map(Number);
@@ -104,46 +268,155 @@ const formattedDate = `${d} de ${MONTHS[m - 1]} de ${y}`;
 
 const filterQs = filterBarberId ? `?barber=${filterBarberId}` : '';
 
-// Data for client script
+// Linhas de hora pra render no eixo esquerdo (em "índice de hora" — multiplica por --hour-px no CSS)
+const hourLines = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => ({
+  hour:  START_HOUR + i,
+  label: `${String(START_HOUR + i).padStart(2, '0')}:00`,
+  hourIdx: i,
+}));
+
+// Dados leves dos agendamentos pra usar no client (modal de detalhes / reschedule)
+const apptsLite = apptList.map(a => ({
+  id:                a.id,
+  status:            a.status,
+  customerName:      a.customerName,
+  customerPhone:     a.customerPhone,
+  customerPhoneDisplay: a.customerPhoneDisplay,
+  customerBirthdate: a.customerBirthdate,
+  notes:             a.notes,
+  lastModifiedLabel: a.lastModifiedLabel,
+  serviceName:       a.serviceName,
+  barberName:        a.barberName,
+  barberId:          a.barberId,
+  durationMinutes:   a.durationMinutes,
+  priceCents:        a.priceCents,
+  price:             a.price,
+  timeLocal:         a.timeLocal,
+  endTimeLocal:      a.endTimeLocal,
+  whatsappUrl:       a.whatsappUrl,
+  telUrl:            a.telUrl,
+}));
+
 const clientData = {
   date,
   role:              session.role,
   sessionBarberId:   session.barberId,
   filterBarberId,
   allBarbers,
+  todayStr,
+  appts:             apptsLite,
+  startHour:         START_HOUR,
+  totalHours:        TOTAL_HOURS,
 };
 ---
 
 <AdminLayout title={`${weekday}, ${formattedDate}`} barberName={barberRow.name} role={session.role}>
 
-  <!-- Day navigation -->
+  <style is:global>
+    .timeline-root { --hour-px: 110px; }
+    @media (max-width: 640px) { .timeline-root { --hour-px: 72px; } }
+  </style>
+
+
+  <!-- Date navigation header -->
   <div class="border-b border-white/5 px-4 py-3">
-    <div class="max-w-3xl mx-auto flex items-center justify-between">
+    <div class="max-w-4xl mx-auto flex items-center justify-between gap-3">
       <a href={`/admin/dia/${prevDate}${filterQs}`}
-         class="text-neutral-400 hover:text-neutral-200 transition-colors p-2 -ml-2 flex items-center gap-1 text-sm">
+         class="text-neutral-400 hover:text-neutral-200 transition-colors p-2 -ml-2 rounded hover:bg-white/5"
+         aria-label="Dia anterior">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
         </svg>
       </a>
-      <div class="text-center">
-        <p class="text-sm font-medium text-neutral-200">
-          {weekday}{isToday && <span class="text-teal-light"> · Hoje</span>}
-        </p>
-        <p class="text-xs text-neutral-500">{formattedDate}</p>
+
+      <div class="relative flex items-center gap-3 min-w-0">
+        <div class="text-center min-w-0">
+          <p class="text-sm font-medium text-neutral-200 truncate">
+            {weekday}{isToday && <span class="text-teal-light"> · Hoje</span>}
+          </p>
+          <p class="text-xs text-neutral-500 truncate">{formattedDate}</p>
+        </div>
+        <button id="cal-toggle" type="button"
+                class="inline-flex items-center text-neutral-400 hover:text-teal-light transition-colors p-1.5 rounded hover:bg-white/5"
+                aria-label="Escolher data">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          </svg>
+        </button>
+
+        <!-- Calendário custom popover -->
+        <div id="cal-popover"
+             class="hidden absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 bg-dark-card border border-white/10 rounded-lg shadow-2xl shadow-black/50 w-[300px] p-3 select-none">
+          <!-- Header: mês/ano e setas -->
+          <div class="flex items-center justify-between mb-3 px-1">
+            <button id="cal-prev" type="button"
+                    class="p-1.5 rounded text-neutral-400 hover:text-neutral-100 hover:bg-white/5 transition-colors"
+                    aria-label="Mês anterior">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+              </svg>
+            </button>
+            <p id="cal-title" class="text-sm font-medium text-neutral-100 tabular-nums">—</p>
+            <button id="cal-next" type="button"
+                    class="p-1.5 rounded text-neutral-400 hover:text-neutral-100 hover:bg-white/5 transition-colors"
+                    aria-label="Próximo mês">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Dias da semana -->
+          <div class="grid grid-cols-7 gap-1 mb-1 px-1">
+            <span class="text-[10px] text-center text-neutral-600 uppercase tracking-wider py-1">D</span>
+            <span class="text-[10px] text-center text-neutral-600 uppercase tracking-wider py-1">S</span>
+            <span class="text-[10px] text-center text-neutral-600 uppercase tracking-wider py-1">T</span>
+            <span class="text-[10px] text-center text-neutral-600 uppercase tracking-wider py-1">Q</span>
+            <span class="text-[10px] text-center text-neutral-600 uppercase tracking-wider py-1">Q</span>
+            <span class="text-[10px] text-center text-neutral-600 uppercase tracking-wider py-1">S</span>
+            <span class="text-[10px] text-center text-neutral-600 uppercase tracking-wider py-1">S</span>
+          </div>
+
+          <!-- Grid de dias (renderizado via JS) -->
+          <div id="cal-grid" class="grid grid-cols-7 gap-1 px-1"></div>
+
+          <!-- Footer -->
+          <div class="flex items-center justify-between mt-3 pt-3 border-t border-white/5 px-1">
+            <button id="cal-today" type="button"
+                    class="text-xs text-teal-light hover:text-teal font-medium transition-colors">
+              Hoje
+            </button>
+            <button id="cal-close" type="button"
+                    class="text-xs text-neutral-500 hover:text-neutral-200 transition-colors">
+              Fechar
+            </button>
+          </div>
+        </div>
       </div>
+
       <a href={`/admin/dia/${nextDate}${filterQs}`}
-         class="text-neutral-400 hover:text-neutral-200 transition-colors p-2 -mr-2 flex items-center gap-1 text-sm">
+         class="text-neutral-400 hover:text-neutral-200 transition-colors p-2 -mr-2 rounded hover:bg-white/5"
+         aria-label="Próximo dia">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
         </svg>
       </a>
     </div>
+
+    {!isToday && (
+      <div class="max-w-4xl mx-auto mt-2 text-center">
+        <a href={`/admin/dia/${todayStr}${filterQs}`}
+           class="text-xs text-teal-light hover:text-teal underline-offset-2 hover:underline">
+          ← Voltar para hoje
+        </a>
+      </div>
+    )}
   </div>
 
   <!-- Barber filter tabs (admin only) -->
   {session.role === 'admin' && (
     <div class="border-b border-white/5 px-4 py-2.5 overflow-x-auto">
-      <div class="max-w-3xl mx-auto flex gap-2 min-w-max">
+      <div class="max-w-4xl mx-auto flex gap-2 min-w-max">
         <a href={`/admin/dia/${date}`}
            class:list={['text-xs px-3 py-1.5 rounded-full border transition-colors',
              !filterBarberId ? 'bg-teal/20 border-teal/40 text-teal-light' : 'border-white/10 text-neutral-400 hover:text-neutral-200']}>
@@ -160,120 +433,219 @@ const clientData = {
     </div>
   )}
 
-  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-20">
+  <main class="max-w-4xl mx-auto px-4 py-6 space-y-5 pb-20">
 
-    <!-- Next appointment highlight -->
-    {nextAppt && (
-      <section>
-        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-2">Próximo</p>
-        <div class="bg-teal/10 border border-teal/30 rounded-md p-4">
-          <div class="flex items-start justify-between gap-4 mb-3">
-            <div>
-              <p class="text-teal-light font-bold text-3xl tabular-nums">{nextAppt.timeLocal}</p>
-              <p class="text-neutral-100 font-medium mt-0.5">{nextAppt.customerName}</p>
-              <p class="text-neutral-400 text-sm">{nextAppt.serviceName}</p>
-              {session.role === 'admin' && (
-                <p class="text-neutral-500 text-xs mt-0.5">{nextAppt.barberName}</p>
-              )}
-            </div>
-            <div class="text-right shrink-0">
-              <p class="text-teal-light font-semibold text-lg">{nextAppt.price}</p>
-              <p class="text-neutral-500 text-xs">{nextAppt.durationMinutes} min</p>
-              <p class="text-neutral-600 text-xs mt-1">{nextAppt.customerPhone}</p>
-            </div>
-          </div>
-          <div id={`actions-${nextAppt.id}`} class="flex gap-2">
-            <button data-action="complete" data-id={String(nextAppt.id)}
-              class="flex-1 bg-teal hover:bg-teal-hover text-white text-xs font-bold uppercase tracking-widest py-2.5 rounded transition-colors">
-              Concluído
-            </button>
-            <button data-action="no-show" data-id={String(nextAppt.id)}
-              class="flex-1 border border-white/10 hover:border-yellow-500/40 text-neutral-400 hover:text-yellow-400 text-xs font-medium py-2.5 rounded transition-colors">
-              No-Show
-            </button>
-            <button data-action="cancel" data-id={String(nextAppt.id)}
-              class="flex-1 border border-white/10 hover:border-red-500/40 text-neutral-400 hover:text-red-400 text-xs font-medium py-2.5 rounded transition-colors">
-              Cancelar
-            </button>
-          </div>
-        </div>
-      </section>
-    )}
-
-    <!-- Full appointment list -->
-    <section>
-      <p class="text-xs text-neutral-500 uppercase tracking-widest mb-2">
-        Agendamentos {apptList.length > 0 && `(${apptList.length})`}
-      </p>
-
-      {apptList.length === 0 ? (
-        <div class="bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
-          <p class="text-neutral-500 text-sm">Nenhum agendamento para este dia.</p>
-        </div>
+    <!-- Stats: receita prevista -->
+    <section class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div class="bg-dark-card border border-teal/20 rounded-lg p-4 sm:col-span-2">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Receita prevista do dia</p>
+        <p class="text-3xl font-bold text-teal-light mt-1 tabular-nums">{revenueLabel}</p>
+        <p class="text-xs text-neutral-500 mt-0.5">
+          {revenueCount} {revenueCount === 1 ? 'agendamento' : 'agendamentos'} considerados (confirmados + concluídos)
+        </p>
+      </div>
+      {nextAppt ? (
+        <a href={`#appt-${nextAppt.id}`} class="bg-dark-card border border-white/5 hover:border-teal/30 rounded-lg p-4 transition-colors group">
+          <p class="text-xs text-neutral-500 uppercase tracking-widest">Próximo</p>
+          <p class="text-xl font-bold text-neutral-100 mt-1 tabular-nums">{nextAppt.timeLocal}</p>
+          <p class="text-xs text-neutral-400 mt-0.5 truncate">{nextAppt.customerName}</p>
+          <p class="text-xs text-neutral-600 truncate">{nextAppt.serviceName}</p>
+        </a>
       ) : (
-        <div class="space-y-2">
-          {apptList.map(a => (
-            <div class:list={[
-              'bg-dark-card border rounded-md overflow-hidden',
-              a.status === 'confirmed' ? 'border-white/5' :
-              a.status === 'cancelled' ? 'border-red-500/10'  :
-              a.status === 'completed' ? 'border-teal/15'     :
-              'border-yellow-500/15',
-            ]}>
-              <div class="p-4">
-                <div class="flex items-start justify-between gap-4">
-                  <div class="flex items-start gap-3">
-                    <div class="min-w-[3rem] text-center">
-                      <p class:list={['font-bold tabular-nums',
-                        a.status === 'confirmed' ? 'text-neutral-100' : 'text-neutral-500']}>
-                        {a.timeLocal}
-                      </p>
-                      <p class="text-neutral-600 text-xs">{a.endTimeLocal}</p>
-                    </div>
-                    <div>
-                      <p class:list={['font-medium', a.status !== 'confirmed' ? 'text-neutral-500' : 'text-neutral-100']}>
-                        {a.customerName}
-                      </p>
-                      <p class="text-neutral-400 text-sm">{a.serviceName}</p>
-                      {session.role === 'admin' && (
-                        <p class="text-neutral-600 text-xs">{a.barberName}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div class="text-right shrink-0">
-                    <p class:list={['font-medium', a.status !== 'confirmed' ? 'text-neutral-600' : 'text-neutral-300']}>
-                      {a.price}
-                    </p>
-                    <p class="text-neutral-600 text-xs">{a.durationMinutes} min</p>
-                    <div class="mt-1">
-                      {a.status === 'completed' && <span class="text-xs text-teal-light">✓ Concluído</span>}
-                      {a.status === 'cancelled'  && <span class="text-xs text-red-400">✕ Cancelado</span>}
-                      {a.status === 'no_show'    && <span class="text-xs text-yellow-500">✗ No-Show</span>}
-                    </div>
-                  </div>
-                </div>
-
-                {a.status === 'confirmed' && a.id !== nextAppt?.id && (
-                  <div id={`actions-${a.id}`} class="flex gap-2 mt-3">
-                    <button data-action="complete" data-id={String(a.id)}
-                      class="flex-1 border border-teal/20 hover:bg-teal/10 text-teal-light text-xs font-medium py-2 rounded transition-colors">
-                      Concluído
-                    </button>
-                    <button data-action="no-show" data-id={String(a.id)}
-                      class="flex-1 border border-white/10 hover:border-yellow-500/30 text-neutral-400 hover:text-yellow-400 text-xs font-medium py-2 rounded transition-colors">
-                      No-Show
-                    </button>
-                    <button data-action="cancel" data-id={String(a.id)}
-                      class="flex-1 border border-white/10 hover:border-red-500/30 text-neutral-400 hover:text-red-400 text-xs font-medium py-2 rounded transition-colors">
-                      Cancelar
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+        <div class="bg-dark-card border border-white/5 rounded-lg p-4 flex flex-col justify-center">
+          <p class="text-xs text-neutral-500 uppercase tracking-widest">Próximo</p>
+          <p class="text-sm text-neutral-500 mt-1">Sem próximos hoje</p>
         </div>
       )}
+    </section>
+
+    <!-- Timeline -->
+    <section>
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">
+          Agenda do dia {apptList.length > 0 && `(${apptList.length})`}
+        </p>
+        <p class="text-[10px] text-neutral-600 uppercase tracking-widest">
+          {String(START_HOUR).padStart(2, '0')}:00 → {String(END_HOUR).padStart(2, '0')}:00
+        </p>
+      </div>
+
+      <div class="timeline-root bg-dark-card border border-white/5 rounded-lg overflow-hidden">
+        <div class="relative flex" style={`height: calc(var(--hour-px) * ${TOTAL_HOURS})`}>
+          <!-- Eixo de horas (esquerda) -->
+          <div class="relative w-14 shrink-0 border-r border-white/5">
+            {hourLines.map(h => (
+              <div class="absolute left-0 right-0 text-[11px] text-neutral-500 tabular-nums px-2"
+                   style={`top: calc(var(--hour-px) * ${h.hourIdx} - 6px)`}>
+                {h.label}
+              </div>
+            ))}
+          </div>
+
+          <!-- Área principal da timeline -->
+          <div id="timeline-area" class="relative flex-1">
+
+            <!-- Linhas horizontais por hora -->
+            {hourLines.map(h => (
+              <div class="absolute left-0 right-0 border-t border-white/[0.04] pointer-events-none"
+                   style={`top: calc(var(--hour-px) * ${h.hourIdx})`} />
+            ))}
+
+            <!-- Linhas tracejadas a cada 30min -->
+            {hourLines.slice(0, -1).map(h => (
+              <div class="absolute left-0 right-0 border-t border-dashed border-white/[0.025] pointer-events-none"
+                   style={`top: calc(var(--hour-px) * ${h.hourIdx} + var(--hour-px) / 2)`} />
+            ))}
+
+            <!-- Camada clicável de fundo pra agendar em buracos -->
+            <div id="empty-click-area"
+                 class="absolute inset-0 cursor-cell hover:bg-teal/[0.02] transition-colors"
+                 data-start-hour={String(START_HOUR)}
+                 title="Clique para agendar neste horário"></div>
+
+            <!-- Bloqueios (time_off) -->
+            {blockList.map(b => (
+              <div class="absolute left-2 right-2 rounded-md border border-neutral-700/40 bg-neutral-800/40 px-3 py-1.5 overflow-hidden pointer-events-none flex items-center gap-2"
+                   style={`top: calc(var(--hour-px) * ${b.topMin} / 60); height: calc(var(--hour-px) * ${b.durationMin} / 60 - 4px); min-height: 28px; background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(255,255,255,0.025) 6px, rgba(255,255,255,0.025) 12px)`}>
+                <svg class="w-3.5 h-3.5 text-neutral-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+                </svg>
+                <div class="min-w-0 flex-1">
+                  <p class="text-xs font-medium text-neutral-400 truncate">{b.reason}</p>
+                  <p class="text-[10px] text-neutral-600 tabular-nums">{b.timeLocal} → {b.endTimeLocal}</p>
+                </div>
+              </div>
+            ))}
+
+            <!-- Linha "Agora" -->
+            {nowTopMin !== null && (
+              <div class="absolute left-0 right-0 z-10 pointer-events-none"
+                   style={`top: calc(var(--hour-px) * ${nowTopMin} / 60)`}>
+                <div class="relative h-px bg-teal">
+                  <span class="absolute -left-1 -top-1 w-2 h-2 bg-teal rounded-full animate-pulse"></span>
+                </div>
+              </div>
+            )}
+
+            <!-- Cards de agendamento -->
+            {apptList.map(a => {
+              const statusBorder =
+                a.isLate                    ? 'border-l-red-500'     :
+                a.status === 'confirmed'    ? 'border-l-teal'        :
+                a.status === 'cancelled'    ? 'border-l-red-500/60'  :
+                a.status === 'completed'    ? 'border-l-teal-light'  :
+                                              'border-l-amber-500/70';
+              const statusBg =
+                a.isLate                    ? 'bg-red-950/25'        :
+                a.status === 'confirmed'    ? 'bg-dark-surface'      :
+                a.status === 'cancelled'    ? 'bg-red-950/20'        :
+                a.status === 'completed'    ? 'bg-teal/5'            :
+                                              'bg-amber-950/15';
+              const muted = a.status === 'cancelled' || a.status === 'completed' || a.status === 'no_show';
+              return (
+                <div id={`appt-${a.id}`}
+                     class:list={['appt-card absolute left-2 right-2 rounded-md border border-white/10 border-l-[3px] overflow-hidden group hover:border-teal/40 hover:z-20 transition-colors',
+                       statusBorder, statusBg]}
+                     data-status={a.status}
+                     data-price-cents={String(a.priceCents)}
+                     data-tel={a.telUrl}
+                     data-phone-display={a.customerPhoneDisplay}
+                     data-customer-name={a.customerName}
+                     data-id={String(a.id)}
+                     style={`top: calc(var(--hour-px) * ${a.topMin} / 60); height: calc(var(--hour-px) * ${a.durationMin} / 60 - 4px); min-height: 56px`}>
+
+                  <!-- Layout em 2 linhas compactas -->
+                  <div class="px-3 py-2 h-full flex flex-col justify-between">
+                    <!-- Linha 1: hora + nome + preço -->
+                    <div class="flex items-baseline justify-between gap-3 min-w-0">
+                      <div class="flex items-baseline gap-2 min-w-0 flex-1">
+                        <span class:list={['font-bold tabular-nums text-sm shrink-0',
+                          muted ? 'text-neutral-500' : 'text-neutral-100']}>
+                          {a.timeLocal}
+                        </span>
+                        <span class:list={['text-sm font-medium truncate',
+                          muted ? 'text-neutral-500 line-through decoration-1' : 'text-neutral-100']}>
+                          {a.customerName}
+                        </span>
+                      </div>
+                      <span class:list={['text-sm font-semibold tabular-nums shrink-0',
+                        muted ? 'text-neutral-600' : 'text-teal-light']}>
+                        {a.price}
+                      </span>
+                    </div>
+
+                    <!-- Linha 2: serviço + barbeiro + duração + status -->
+                    <div class="flex items-baseline justify-between gap-3 min-w-0">
+                      <p class="text-xs text-neutral-400 truncate min-w-0 flex-1">
+                        {a.serviceName}
+                        {session.role === 'admin' && (
+                          <span class="text-neutral-600"> · {a.barberName.split(' ')[0]}</span>
+                        )}
+                      </p>
+                      <span class="text-[11px] text-neutral-500 tabular-nums shrink-0">
+                        {a.endTimeLocal} · {a.durationMinutes}min
+                      </span>
+                    </div>
+
+                    {a.isLate && a.status === 'confirmed' && (
+                      <div class="absolute top-1.5 right-2 flex items-center gap-1 bg-red-500/20 border border-red-500/30 rounded px-1.5 py-0.5">
+                        <span class="w-1 h-1 bg-red-400 rounded-full animate-pulse"></span>
+                        <span class="text-[9px] font-bold text-red-400 uppercase tracking-wider">Atrasado</span>
+                      </div>
+                    )}
+                    {(a.status === 'completed' || a.status === 'cancelled' || a.status === 'no_show') && (
+                      <div class="absolute top-1.5 right-2">
+                        {a.status === 'completed' && <span class="text-[10px] text-teal-light/80">✓</span>}
+                        {a.status === 'cancelled' && <span class="text-[10px] text-red-400/80">✕</span>}
+                        {a.status === 'no_show'   && <span class="text-[10px] text-amber-400/80">✗</span>}
+                      </div>
+                    )}
+                  </div>
+
+                  <!-- Hover actions -->
+                  {a.status === 'confirmed' && (
+                    <div id={`actions-${a.id}`}
+                         class="absolute inset-x-0 bottom-0 px-2 py-1.5 bg-gradient-to-t from-black/95 via-black/85 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-wrap gap-1.5 justify-end pointer-events-none group-hover:pointer-events-auto">
+                      <a href={a.whatsappUrl} target="_blank" rel="noopener"
+                         class="px-2 py-1 rounded border border-green-500/30 bg-black/40 hover:bg-green-500/15 text-[10px] font-medium text-green-400 transition-colors flex items-center gap-1"
+                         title="Falar no WhatsApp"
+                         data-no-card-click>
+                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                        </svg>
+                        WhatsApp
+                      </a>
+                      <button data-action="open-detail" data-id={String(a.id)}
+                              class="px-2 py-1 rounded border border-white/15 bg-black/40 hover:bg-white/5 text-[10px] font-medium text-neutral-300 transition-colors">
+                        Detalhes
+                      </button>
+                      <button data-action="complete" data-id={String(a.id)}
+                              class="px-2 py-1 rounded border border-teal/30 bg-black/40 hover:bg-teal/15 text-[10px] font-medium text-teal-light transition-colors">
+                        ✓ Concluir
+                      </button>
+                      <button data-action="no-show" data-id={String(a.id)}
+                              class="px-2 py-1 rounded border border-amber-500/25 bg-black/40 hover:bg-amber-500/10 text-[10px] font-medium text-amber-400 transition-colors">
+                        No-show
+                      </button>
+                      <button data-action="cancel" data-id={String(a.id)}
+                              class="px-2 py-1 rounded border border-red-500/25 bg-black/40 hover:bg-red-500/10 text-[10px] font-medium text-red-400 transition-colors">
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {apptList.length === 0 && (
+              <div class="absolute inset-0 flex items-center justify-center">
+                <p class="text-neutral-500 text-sm">Nenhum agendamento para este dia.</p>
+              </div>
+            )}
+
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Bottom action buttons -->
@@ -395,13 +767,387 @@ const clientData = {
     </div>
 
   </main>
+
+  <!-- ============ MODAIS ============ -->
+
+  <!-- Modal de confirmação genérico (cancelar etc.) -->
+  <div id="confirm-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+    <div class="bg-dark-card border border-white/10 rounded-lg shadow-2xl max-w-sm w-full p-6">
+      <p id="confirm-title" class="text-base font-medium text-neutral-100 mb-2">Confirmar?</p>
+      <p id="confirm-message" class="text-sm text-neutral-400 mb-5 leading-relaxed">Tem certeza?</p>
+      <div class="flex gap-2 justify-end">
+        <button id="confirm-cancel"
+                class="px-4 py-2 rounded text-sm font-medium text-neutral-300 border border-white/10 hover:bg-white/5 transition-colors">
+          Voltar
+        </button>
+        <button id="confirm-ok"
+                class="px-4 py-2 rounded text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-colors">
+          Confirmar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de detalhes do agendamento -->
+  <div id="detail-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm">
+    <div class="bg-dark-card border border-white/10 rounded-t-lg sm:rounded-lg shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+      <!-- Header -->
+      <div class="flex items-start justify-between gap-4 p-5 border-b border-white/5">
+        <div class="min-w-0 flex-1">
+          <p id="dm-name" class="text-lg font-bold text-neutral-100 truncate">—</p>
+          <p id="dm-service" class="text-sm text-neutral-400 truncate">—</p>
+        </div>
+        <button id="dm-close" class="text-neutral-500 hover:text-neutral-200 text-xl leading-none -mt-1 -mr-1 p-1">×</button>
+      </div>
+
+      <!-- Info -->
+      <div class="p-5 space-y-4">
+        <!-- Horário + duração + valor -->
+        <div class="grid grid-cols-3 gap-3 text-center">
+          <div class="bg-dark-surface border border-white/5 rounded p-3">
+            <p class="text-[10px] text-neutral-500 uppercase tracking-widest">Horário</p>
+            <p id="dm-time" class="text-base font-bold text-teal-light tabular-nums mt-1">—</p>
+          </div>
+          <div class="bg-dark-surface border border-white/5 rounded p-3">
+            <p class="text-[10px] text-neutral-500 uppercase tracking-widest">Duração</p>
+            <p id="dm-duration" class="text-base font-bold text-neutral-200 tabular-nums mt-1">—</p>
+          </div>
+          <div class="bg-dark-surface border border-white/5 rounded p-3">
+            <p class="text-[10px] text-neutral-500 uppercase tracking-widest">Valor</p>
+            <p id="dm-price" class="text-base font-bold text-neutral-200 tabular-nums mt-1">—</p>
+          </div>
+        </div>
+
+        <!-- Contato -->
+        <div>
+          <p class="text-[10px] text-neutral-500 uppercase tracking-widest mb-1.5">Contato</p>
+          <div class="flex items-center gap-2">
+            <a id="dm-tel" href="#"
+               class="flex-1 bg-dark-surface border border-white/5 hover:border-teal/30 rounded px-3 py-2 text-sm text-neutral-200 tabular-nums transition-colors flex items-center gap-2">
+              <svg class="w-4 h-4 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+              </svg>
+              <span id="dm-phone">—</span>
+            </a>
+            <button id="dm-copy-phone" type="button"
+                    class="px-2.5 py-2 rounded border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light transition-colors text-xs"
+                    title="Copiar telefone">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+              </svg>
+            </button>
+            <a id="dm-whatsapp" href="#" target="_blank" rel="noopener"
+               class="px-2.5 py-2 rounded border border-green-500/30 hover:bg-green-500/10 text-green-400 transition-colors"
+               title="WhatsApp">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884"/>
+              </svg>
+            </a>
+          </div>
+        </div>
+
+        <!-- Notas -->
+        <div>
+          <p class="text-[10px] text-neutral-500 uppercase tracking-widest mb-1.5">Notas internas</p>
+          <textarea id="dm-notes" rows="3" placeholder="Ex: alérgico a barba feita com lâmina..."
+                    class="w-full bg-dark-surface border border-white/10 focus:border-teal/40 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 outline-none resize-none transition-colors"></textarea>
+          <div class="flex items-center justify-between mt-1.5 h-4">
+            <span id="dm-notes-status" class="text-[10px] text-neutral-600"></span>
+            <button id="dm-notes-save"
+                    class="text-[10px] text-teal-light hover:text-teal font-medium uppercase tracking-widest hidden">
+              Salvar notas
+            </button>
+          </div>
+        </div>
+
+        <!-- Histórico do cliente -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <p class="text-[10px] text-neutral-500 uppercase tracking-widest">Histórico</p>
+            <span id="dm-history-count" class="text-[10px] text-neutral-600 tabular-nums"></span>
+          </div>
+          <div id="dm-history" class="space-y-1.5 text-xs">
+            <p class="text-neutral-600 italic">Carregando...</p>
+          </div>
+        </div>
+
+        <!-- Editar cliente (collapsible) -->
+        <details class="group">
+          <summary class="cursor-pointer text-[10px] text-neutral-500 hover:text-neutral-300 uppercase tracking-widest list-none flex items-center gap-1 transition-colors">
+            <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+            Editar dados do cliente
+          </summary>
+          <div class="mt-3 space-y-2 border-l border-white/5 pl-3">
+            <div>
+              <label class="block text-[10px] text-neutral-500 uppercase tracking-widest mb-1">Nome completo</label>
+              <input id="dm-edit-name" type="text"
+                     class="w-full bg-dark-surface border border-white/10 focus:border-teal/40 rounded px-3 py-2 text-sm text-neutral-200 outline-none transition-colors" />
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[10px] text-neutral-500 uppercase tracking-widest mb-1">Telefone</label>
+                <input id="dm-edit-phone" type="tel" inputmode="numeric" maxlength="16" placeholder="(84) 99999-9999"
+                       class="w-full bg-dark-surface border border-white/10 focus:border-teal/40 rounded px-3 py-2 text-sm text-neutral-200 tabular-nums outline-none transition-colors" />
+              </div>
+              <div>
+                <label class="block text-[10px] text-neutral-500 uppercase tracking-widest mb-1">Nascimento</label>
+                <input id="dm-edit-birthdate" type="text" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa"
+                       class="w-full bg-dark-surface border border-white/10 focus:border-teal/40 rounded px-3 py-2 text-sm text-neutral-200 tabular-nums outline-none transition-colors" />
+              </div>
+            </div>
+            <p class="text-[10px] text-neutral-600 leading-relaxed">
+              A alteração propaga pra todos os agendamentos com este telefone.
+            </p>
+            <div class="flex items-center justify-between h-5">
+              <span id="dm-edit-status" class="text-[10px] text-neutral-600"></span>
+              <button id="dm-edit-save"
+                      class="text-[10px] text-teal-light hover:text-teal font-medium uppercase tracking-widest hidden">
+                Salvar
+              </button>
+            </div>
+          </div>
+        </details>
+
+        <!-- Mover horário -->
+        <div>
+          <p class="text-[10px] text-neutral-500 uppercase tracking-widest mb-1.5">Mover horário</p>
+          <div class="space-y-2">
+            <input id="dm-move-date" type="date"
+                   class="w-full bg-dark-surface border border-white/10 focus:border-teal/40 rounded px-3 py-2 text-sm text-neutral-200 outline-none transition-colors" />
+            <div id="dm-move-slots" class="text-xs text-neutral-500 min-h-[2rem]">
+              Selecione uma data acima.
+            </div>
+            <button id="dm-move-confirm" disabled
+                    class="w-full bg-teal hover:bg-teal-hover text-white text-xs font-bold uppercase tracking-widest py-2 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+              Confirmar reagendamento
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Última modificação (auditoria) -->
+      <div id="dm-audit" class="hidden px-5 pb-2 -mt-2">
+        <p class="text-[10px] text-neutral-600">
+          Última alteração: <span id="dm-audit-text" class="text-neutral-500">—</span>
+        </p>
+      </div>
+
+      <!-- Footer com ações principais -->
+      <div class="border-t border-white/5 p-4 flex gap-2">
+        <button data-action="complete" data-id="" id="dm-complete"
+                class="flex-1 border border-teal/30 hover:bg-teal/15 text-teal-light text-xs font-bold uppercase tracking-widest py-2.5 rounded transition-colors">
+          ✓ Concluir
+        </button>
+        <button data-action="no-show" data-id="" id="dm-noshow"
+                class="flex-1 border border-amber-500/25 hover:bg-amber-500/10 text-amber-400 text-xs font-bold uppercase tracking-widest py-2.5 rounded transition-colors">
+          No-show
+        </button>
+        <button data-action="cancel" data-id="" id="dm-cancel"
+                class="flex-1 border border-red-500/25 hover:bg-red-500/10 text-red-400 text-xs font-bold uppercase tracking-widest py-2.5 rounded transition-colors">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
+
 </AdminLayout>
 
 <script define:vars={{ clientData }}>
   const { date, role, sessionBarberId, filterBarberId, allBarbers } = clientData;
 
-  // ─── Helpers ────────────────────────────────────────────────────────────────
+  // ─── Calendário custom ──────────────────────────────────────────────────────
+  (function setupCalendar() {
+    const toggle  = document.getElementById('cal-toggle');
+    const popover = document.getElementById('cal-popover');
+    const title   = document.getElementById('cal-title');
+    const grid    = document.getElementById('cal-grid');
+    const prev    = document.getElementById('cal-prev');
+    const next    = document.getElementById('cal-next');
+    const todayBtn= document.getElementById('cal-today');
+    const closeBtn= document.getElementById('cal-close');
+    if (!toggle || !popover || !title || !grid || !prev || !next || !todayBtn || !closeBtn) return;
 
+    const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const qs = filterBarberId ? `?barber=${filterBarberId}` : '';
+
+    // Mês visualizado, com base na data da página
+    const [py, pm] = date.split('-').map(Number);
+    let viewYear  = py;
+    let viewMonth = pm - 1; // 0-based
+
+    // Hoje no fuso local do navegador (basta pra destacar visualmente)
+    const now = new Date();
+    const todayY = now.getFullYear();
+    const todayM = now.getMonth();
+    const todayD = now.getDate();
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function fmt(y, m, d) { return `${y}-${pad(m + 1)}-${pad(d)}`; }
+
+    // Cache: "YYYY-MM" -> { "YYYY-MM-DD": qty }
+    const monthCache = new Map();
+
+    async function fetchMonth(yyyymm) {
+      if (monthCache.has(yyyymm)) return monthCache.get(yyyymm);
+      try {
+        const params = new URLSearchParams({ month: yyyymm });
+        if (filterBarberId) params.set('barber', String(filterBarberId));
+        const res = await fetch(`/api/admin/appointments/calendar?${params}`);
+        if (!res.ok) return {};
+        const data = await res.json();
+        const days = data.days ?? {};
+        monthCache.set(yyyymm, days);
+        return days;
+      } catch {
+        return {};
+      }
+    }
+
+    async function render() {
+      title.textContent = `${MONTHS[viewMonth]} ${viewYear}`;
+      grid.innerHTML = '';
+
+      const firstOfMonth = new Date(viewYear, viewMonth, 1);
+      const startDow     = firstOfMonth.getDay(); // 0 = domingo
+      const daysInMonth  = new Date(viewYear, viewMonth + 1, 0).getDate();
+      const daysInPrev   = new Date(viewYear, viewMonth, 0).getDate();
+
+      // Busca contagem em paralelo: mês atual + adjacentes (pros dias de overflow)
+      const ymCur  = `${viewYear}-${pad(viewMonth + 1)}`;
+      const prevM  = viewMonth === 0 ? 11 : viewMonth - 1;
+      const prevY  = viewMonth === 0 ? viewYear - 1 : viewYear;
+      const nextM  = viewMonth === 11 ? 0 : viewMonth + 1;
+      const nextY  = viewMonth === 11 ? viewYear + 1 : viewYear;
+      const ymPrev = `${prevY}-${pad(prevM + 1)}`;
+      const ymNext = `${nextY}-${pad(nextM + 1)}`;
+
+      const [daysCur, daysPrev, daysNext] = await Promise.all([
+        fetchMonth(ymCur), fetchMonth(ymPrev), fetchMonth(ymNext),
+      ]);
+      const allDays = { ...daysPrev, ...daysCur, ...daysNext };
+
+      // Total de células: sempre 6 linhas pra altura consistente
+      const totalCells = 42;
+      for (let i = 0; i < totalCells; i++) {
+        const cell = document.createElement('button');
+        cell.type = 'button';
+        cell.className = 'relative aspect-square text-xs rounded flex flex-col items-center justify-center tabular-nums transition-colors';
+
+        let cellY, cellM, cellD;
+        let inMonth = true;
+
+        if (i < startDow) {
+          cellD = daysInPrev - (startDow - 1 - i);
+          cellM = prevM;
+          cellY = prevY;
+          inMonth = false;
+        } else if (i >= startDow + daysInMonth) {
+          cellD = i - (startDow + daysInMonth) + 1;
+          cellM = nextM;
+          cellY = nextY;
+          inMonth = false;
+        } else {
+          cellD = i - startDow + 1;
+          cellM = viewMonth;
+          cellY = viewYear;
+        }
+
+        const dateStr = fmt(cellY, cellM, cellD);
+        cell.dataset.date = dateStr;
+
+        const isToday    = cellY === todayY && cellM === todayM && cellD === todayD;
+        const isSelected = dateStr === date;
+        const isSunday   = (i % 7) === 0;
+        const qty        = allDays[dateStr] ?? 0;
+
+        // Número do dia
+        const num = document.createElement('span');
+        num.textContent = String(cellD);
+        cell.appendChild(num);
+
+        // Ponto indicador
+        if (qty > 0) {
+          const dot = document.createElement('span');
+          dot.className = 'absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full';
+          // Cor depende do estado da célula pra contrastar
+          if (isSelected) {
+            dot.className += ' bg-white';
+          } else if (!inMonth) {
+            dot.className += ' bg-teal/40';
+          } else {
+            dot.className += ' bg-teal-light';
+          }
+          cell.appendChild(dot);
+          cell.title = `${qty} agendamento${qty > 1 ? 's' : ''}`;
+        }
+
+        if (isSelected) {
+          cell.className += ' bg-teal text-white font-bold ring-2 ring-teal/30';
+        } else if (isToday) {
+          cell.className += ' border border-teal/50 text-teal-light font-semibold hover:bg-teal/10';
+        } else if (!inMonth) {
+          cell.className += ' text-neutral-700 hover:bg-white/5';
+        } else if (isSunday) {
+          cell.className += ' text-neutral-500 hover:bg-white/5';
+        } else {
+          cell.className += ' text-neutral-300 hover:bg-white/10';
+        }
+
+        cell.addEventListener('click', () => {
+          location.href = `/admin/dia/${dateStr}${qs}`;
+        });
+
+        grid.appendChild(cell);
+      }
+    }
+
+    function open() {
+      popover.classList.remove('hidden');
+      render();
+    }
+    function close() {
+      popover.classList.add('hidden');
+    }
+    function toggleOpen() {
+      popover.classList.contains('hidden') ? open() : close();
+    }
+
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleOpen();
+    });
+    closeBtn.addEventListener('click', close);
+
+    prev.addEventListener('click', () => {
+      if (viewMonth === 0) { viewMonth = 11; viewYear--; } else viewMonth--;
+      render();
+    });
+    next.addEventListener('click', () => {
+      if (viewMonth === 11) { viewMonth = 0; viewYear++; } else viewMonth++;
+      render();
+    });
+    todayBtn.addEventListener('click', () => {
+      location.href = `/admin/dia/${fmt(todayY, todayM, todayD)}${qs}`;
+    });
+
+    // Fecha ao clicar fora
+    document.addEventListener('click', (e) => {
+      if (popover.classList.contains('hidden')) return;
+      if (popover.contains(e.target) || toggle.contains(e.target)) return;
+      close();
+    });
+    // ESC fecha
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !popover.classList.contains('hidden')) close();
+    });
+  })();
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
   function localTimeToUtcIso(dateStr, timeStr) {
     const [y, mo, d]   = dateStr.split('-').map(Number);
     const [h, min]     = timeStr.split(':').map(Number);
@@ -418,66 +1164,601 @@ const clientData = {
     return { ok: res.ok, data: await res.json() };
   }
 
-  // ─── Action buttons ─────────────────────────────────────────────────────────
+  // ─── Toast ──────────────────────────────────────────────────────────────────
+  function toast(msg, kind = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const el = document.createElement('div');
+    const color = kind === 'error'   ? 'border-red-500/30 bg-red-950/80 text-red-200'
+               : kind === 'success' ? 'border-teal/30 bg-teal/15 text-teal-light'
+               :                       'border-white/10 bg-dark-card text-neutral-200';
+    el.className = `pointer-events-auto px-4 py-2.5 rounded-md border backdrop-blur-sm text-sm shadow-lg transition-all duration-300 ${color}`;
+    el.textContent = msg;
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(8px)';
+    container.appendChild(el);
+    requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; });
+    setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(8px)';
+      setTimeout(() => el.remove(), 300);
+    }, 3000);
+  }
 
+  // ─── Modal de confirmação ──────────────────────────────────────────────────
+  const confirmModal = document.getElementById('confirm-modal');
+  const confirmTitle = document.getElementById('confirm-title');
+  const confirmMsg   = document.getElementById('confirm-message');
+  const confirmOk    = document.getElementById('confirm-ok');
+  const confirmCancel= document.getElementById('confirm-cancel');
+  let confirmResolve = null;
+
+  function showConfirm(opts) {
+    if (!confirmModal) return Promise.resolve(false);
+    confirmTitle.textContent = opts.title ?? 'Confirmar?';
+    confirmMsg.textContent   = opts.message ?? '';
+    confirmOk.textContent    = opts.okLabel ?? 'Confirmar';
+    confirmOk.className = `px-4 py-2 rounded text-sm font-bold text-white ${opts.danger === false ? 'bg-teal hover:bg-teal-hover' : 'bg-red-600 hover:bg-red-700'} transition-colors`;
+    confirmModal.classList.remove('hidden');
+    return new Promise((resolve) => { confirmResolve = resolve; });
+  }
+  function closeConfirm(result) {
+    confirmModal?.classList.add('hidden');
+    if (confirmResolve) { confirmResolve(result); confirmResolve = null; }
+  }
+  confirmOk?.addEventListener('click',     () => closeConfirm(true));
+  confirmCancel?.addEventListener('click', () => closeConfirm(false));
+  confirmModal?.addEventListener('click',  (e) => { if (e.target === confirmModal) closeConfirm(false); });
+
+  // ─── Atualização local sem reload ───────────────────────────────────────────
+  function updateApptCardStatus(id, newStatus) {
+    const card = document.getElementById(`appt-${id}`);
+    if (!card) return;
+    card.dataset.status = newStatus;
+    // Esconde botões de ação (estado final)
+    const actions = card.querySelector('[id^="actions-"]');
+    if (actions) actions.remove();
+
+    // Aplica estilos mutados (jeito direto: classes adicionais)
+    card.classList.add('opacity-80');
+    // Reflete o status visualmente via badge (sobrepõe atrasado se houver)
+    const oldBadge = card.querySelector('[data-status-badge]');
+    if (oldBadge) oldBadge.remove();
+    const badge = document.createElement('div');
+    badge.dataset.statusBadge = '1';
+    badge.className = 'absolute top-1.5 right-2';
+    if (newStatus === 'completed') badge.innerHTML = '<span class="text-[10px] text-teal-light/80">✓ Concluído</span>';
+    if (newStatus === 'cancelled') badge.innerHTML = '<span class="text-[10px] text-red-400/80">✕ Cancelado</span>';
+    if (newStatus === 'no_show')   badge.innerHTML = '<span class="text-[10px] text-amber-400/80">✗ No-show</span>';
+    card.querySelector('.flex.flex-col.justify-between')?.appendChild(badge);
+
+    // Atualiza receita prevista
+    recalculateRevenue();
+
+    // Atualiza estado no cache local de appts (pro modal continuar coerente)
+    const appt = clientData.appts.find(a => String(a.id) === String(id));
+    if (appt) appt.status = newStatus;
+  }
+
+  function recalculateRevenue() {
+    const cards = document.querySelectorAll('.appt-card');
+    let total = 0;
+    let count = 0;
+    cards.forEach(c => {
+      const s = c.dataset.status;
+      if (s === 'confirmed' || s === 'completed') {
+        total += parseInt(c.dataset.priceCents || '0', 10);
+        count++;
+      }
+    });
+    const rev = document.querySelector('section [class*="text-teal-light"][class*="text-3xl"]');
+    if (rev) rev.textContent = `R$ ${(total / 100).toFixed(0)}`;
+    const countEl = document.querySelector('section .text-xs.text-neutral-500.mt-0\\.5');
+    if (countEl) countEl.textContent = `${count} ${count === 1 ? 'agendamento' : 'agendamentos'} considerados (confirmados + concluídos)`;
+  }
+
+  // ─── Action buttons ─────────────────────────────────────────────────────────
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
+    if (btn.hasAttribute('data-no-card-click')) return;
 
     const action = btn.dataset.action;
     const id     = btn.dataset.id;
+    if (!id) return;
+
+    if (action === 'open-detail') {
+      e.preventDefault();
+      e.stopPropagation();
+      openDetailModal(id);
+      return;
+    }
 
     if (action === 'complete' || action === 'no-show') {
-      btn.disabled    = true;
-      btn.textContent = '...';
+      btn.disabled = true;
       const { ok, data } = await callApi(`/api/admin/appointments/${id}/${action}`);
-      if (ok) { location.reload(); } else { alert(data.error ?? 'Erro'); btn.disabled = false; }
+      if (ok) {
+        updateApptCardStatus(id, action === 'complete' ? 'completed' : 'no_show');
+        closeDetail();
+        toast(action === 'complete' ? 'Marcado como concluído' : 'Marcado como no-show', 'success');
+      } else {
+        toast(data.error ?? 'Erro', 'error');
+        btn.disabled = false;
+      }
 
     } else if (action === 'cancel') {
-      const wrap = document.getElementById(`actions-${id}`);
-      if (!wrap) return;
-      wrap.innerHTML = `
-        <button data-action="cancel-confirm" data-id="${id}"
-          class="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-widest py-2.5 rounded transition-colors">
-          Sim, cancelar
-        </button>
-        <button data-action="cancel-abort" data-id="${id}"
-          class="flex-1 border border-white/10 text-neutral-400 hover:text-neutral-200 text-xs font-medium py-2.5 rounded transition-colors">
-          Não, voltar
-        </button>`;
-
-    } else if (action === 'cancel-confirm') {
-      btn.textContent = 'Cancelando...';
-      btn.disabled    = true;
+      const confirmed = await showConfirm({
+        title:   'Cancelar agendamento?',
+        message: 'O cliente será notificado se acessar o link novamente. Esta ação não pode ser desfeita.',
+        okLabel: 'Sim, cancelar',
+      });
+      if (!confirmed) return;
+      btn.disabled = true;
       const { ok, data } = await callApi(`/api/admin/appointments/${id}/cancel`);
-      if (ok) { location.reload(); } else { alert(data.error ?? 'Erro'); location.reload(); }
-
-    } else if (action === 'cancel-abort') {
-      location.reload();
+      if (ok) {
+        updateApptCardStatus(id, 'cancelled');
+        closeDetail();
+        toast('Agendamento cancelado', 'success');
+      } else {
+        toast(data.error ?? 'Erro', 'error');
+        btn.disabled = false;
+      }
     }
   });
 
-  // ─── Toggle forms ────────────────────────────────────────────────────────────
+  // ─── Modal de detalhes ─────────────────────────────────────────────────────
+  const detailModal = document.getElementById('detail-modal');
+  const dmName      = document.getElementById('dm-name');
+  const dmService   = document.getElementById('dm-service');
+  const dmTime      = document.getElementById('dm-time');
+  const dmDuration  = document.getElementById('dm-duration');
+  const dmPrice     = document.getElementById('dm-price');
+  const dmTel       = document.getElementById('dm-tel');
+  const dmPhone     = document.getElementById('dm-phone');
+  const dmWhats     = document.getElementById('dm-whatsapp');
+  const dmCopyPhone = document.getElementById('dm-copy-phone');
+  const dmNotes     = document.getElementById('dm-notes');
+  const dmNotesSave = document.getElementById('dm-notes-save');
+  const dmNotesStatus = document.getElementById('dm-notes-status');
+  const dmClose     = document.getElementById('dm-close');
+  const dmComplete  = document.getElementById('dm-complete');
+  const dmNoshow    = document.getElementById('dm-noshow');
+  const dmCancel    = document.getElementById('dm-cancel');
+  const dmMoveDate  = document.getElementById('dm-move-date');
+  const dmMoveSlots = document.getElementById('dm-move-slots');
+  const dmMoveConfirm = document.getElementById('dm-move-confirm');
+  const dmHistory      = document.getElementById('dm-history');
+  const dmHistoryCount = document.getElementById('dm-history-count');
+  const dmEditName     = document.getElementById('dm-edit-name');
+  const dmEditPhone    = document.getElementById('dm-edit-phone');
+  const dmEditBirthdate= document.getElementById('dm-edit-birthdate');
+  const dmEditSave     = document.getElementById('dm-edit-save');
+  const dmEditStatus   = document.getElementById('dm-edit-status');
 
+  let currentApptId = null;
+  let currentMoveSlot = null;
+  let notesOriginal = '';
+  let editOriginal = { name: '', phone: '', birthdate: '' };
+
+  // Máscara de telefone (DDD + número)
+  function maskPhone(raw) {
+    const d = (raw ?? '').replace(/\D/g, '').slice(0, 11);
+    if (d.length === 0) return '';
+    if (d.length <= 2)  return `(${d}`;
+    if (d.length <= 6)  return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+    if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  }
+  // Máscara dd/mm/aaaa
+  function maskBirthdate(raw) {
+    const d = (raw ?? '').replace(/\D/g, '').slice(0, 8);
+    if (d.length === 0) return '';
+    if (d.length <= 2)  return d;
+    if (d.length <= 4)  return `${d.slice(0, 2)}/${d.slice(2)}`;
+    return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+  }
+  // Converte 'dd/mm/aaaa' -> 'YYYY-MM-DD' ou null se inválido
+  function parseBirthdateInput(raw) {
+    const m = (raw ?? '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) return null;
+    const dd = +m[1], mm = +m[2], yyyy = +m[3];
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+    const dt = new Date(yyyy, mm - 1, dd);
+    if (dt.getFullYear() !== yyyy || dt.getMonth() !== mm - 1 || dt.getDate() !== dd) return null;
+    const now = new Date();
+    const min = new Date(now.getFullYear() - 100, now.getMonth(), now.getDate());
+    const max = new Date(now.getFullYear() - 5, now.getMonth(), now.getDate());
+    if (dt < min || dt > max) return null;
+    const pad = n => String(n).padStart(2, '0');
+    return `${yyyy}-${pad(mm)}-${pad(dd)}`;
+  }
+  // Converte 'YYYY-MM-DD' -> 'dd/mm/aaaa'
+  function formatBirthdateDisplay(iso) {
+    if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+  }
+
+  dmEditPhone?.addEventListener('input', () => {
+    dmEditPhone.value = maskPhone(dmEditPhone.value);
+    checkEditChanged();
+  });
+  dmEditBirthdate?.addEventListener('input', () => {
+    dmEditBirthdate.value = maskBirthdate(dmEditBirthdate.value);
+    checkEditChanged();
+  });
+  dmEditName?.addEventListener('input', checkEditChanged);
+
+  function checkEditChanged() {
+    const changed = dmEditName.value !== editOriginal.name
+                 || dmEditPhone.value !== editOriginal.phone
+                 || dmEditBirthdate.value !== editOriginal.birthdate;
+    dmEditSave?.classList.toggle('hidden', !changed);
+    if (changed) dmEditStatus.textContent = '';
+  }
+
+  async function loadHistory(id) {
+    if (!dmHistory) return;
+    dmHistory.innerHTML = '<p class="text-neutral-600 italic">Carregando...</p>';
+    if (dmHistoryCount) dmHistoryCount.textContent = '';
+    try {
+      const res = await fetch(`/api/admin/appointments/${id}/history?limit=5`);
+      const data = await res.json();
+      if (!res.ok) {
+        dmHistory.innerHTML = '<p class="text-red-400">Erro ao carregar histórico</p>';
+        return;
+      }
+      if (!data.history?.length) {
+        dmHistory.innerHTML = '<p class="text-neutral-600">Primeira visita deste cliente.</p>';
+        if (dmHistoryCount) dmHistoryCount.textContent = '1 total';
+        return;
+      }
+      if (dmHistoryCount) dmHistoryCount.textContent = `${data.total} no total`;
+      dmHistory.innerHTML = data.history.map(h => {
+        const d = new Date(h.startsAt);
+        const dateLabel = d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' });
+        const timeLabel = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Fortaleza' });
+        const price = `R$ ${(h.priceCents / 100).toFixed(0)}`;
+        const statusColor = h.status === 'completed' ? 'text-teal-light'
+                         : h.status === 'cancelled' ? 'text-red-400/70'
+                         : h.status === 'no_show'   ? 'text-amber-400/80'
+                         :                            'text-neutral-300';
+        const statusIcon = h.status === 'completed' ? '✓'
+                        : h.status === 'cancelled' ? '✕'
+                        : h.status === 'no_show'   ? '✗'
+                        :                            '•';
+        return `
+          <div class="flex items-center gap-2 py-1.5 px-2 bg-dark-surface/50 rounded border border-white/5">
+            <span class="${statusColor} text-xs w-3 text-center">${statusIcon}</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-neutral-300 truncate">${h.serviceName} <span class="text-neutral-600">· ${h.barberName.split(' ')[0]}</span></p>
+              <p class="text-neutral-600 text-[10px] tabular-nums">${dateLabel} · ${timeLabel}</p>
+            </div>
+            <span class="text-neutral-500 text-[11px] tabular-nums shrink-0">${price}</span>
+          </div>
+        `;
+      }).join('');
+    } catch {
+      dmHistory.innerHTML = '<p class="text-red-400">Erro ao carregar histórico</p>';
+    }
+  }
+
+  dmEditSave?.addEventListener('click', async () => {
+    if (!currentApptId) return;
+    const name = dmEditName.value.trim();
+    const phoneDigits = dmEditPhone.value.replace(/\D/g, '');
+    const birthdateIso = dmEditBirthdate.value.trim() === ''
+      ? null
+      : parseBirthdateInput(dmEditBirthdate.value);
+
+    if (name.length < 2)         { dmEditStatus.textContent = 'Nome muito curto'; dmEditStatus.className = 'text-[10px] text-red-400'; return; }
+    if (phoneDigits.length < 10) { dmEditStatus.textContent = 'Telefone inválido'; dmEditStatus.className = 'text-[10px] text-red-400'; return; }
+    if (dmEditBirthdate.value.trim() !== '' && !birthdateIso) {
+      dmEditStatus.textContent = 'Data inválida'; dmEditStatus.className = 'text-[10px] text-red-400'; return;
+    }
+
+    dmEditStatus.textContent = '';
+    dmEditSave.disabled = true;
+    dmEditSave.textContent = 'Salvando...';
+
+    const { ok, data } = await callApi(`/api/admin/appointments/${currentApptId}/customer`, 'PATCH', {
+      customerName:      name,
+      customerPhone:     dmEditPhone.value,
+      customerBirthdate: birthdateIso,
+    });
+
+    dmEditSave.disabled = false;
+    dmEditSave.textContent = 'Salvar';
+    if (ok) {
+      editOriginal = { name: dmEditName.value, phone: dmEditPhone.value, birthdate: dmEditBirthdate.value };
+      dmEditSave.classList.add('hidden');
+      dmEditStatus.className = 'text-[10px] text-teal-light';
+      dmEditStatus.textContent = data.propagated
+        ? `Atualizado em ${data.updated} agendamento${data.updated > 1 ? 's' : ''}`
+        : 'Atualizado';
+      // Atualiza o appt no cache local + header do modal
+      const appt = clientData.appts.find(a => String(a.id) === String(currentApptId));
+      if (appt) {
+        appt.customerName  = name;
+        appt.customerPhone = dmEditPhone.value;
+        appt.customerPhoneDisplay = maskPhone(dmEditPhone.value);
+        // Recalcula whatsapp/tel URLs
+        const digits = phoneDigits;
+        const withDDI = digits.startsWith('55') ? digits : `55${digits}`;
+        appt.telUrl = `tel:+${withDDI}`;
+        appt.whatsappUrl = appt.whatsappUrl.replace(/wa\.me\/\d+/, `wa.me/${withDDI}`);
+      }
+      dmName.textContent  = name;
+      dmPhone.textContent = maskPhone(dmEditPhone.value);
+      dmTel.href = appt?.telUrl ?? '#';
+      dmWhats.href = appt?.whatsappUrl ?? '#';
+      // Atualiza data attrs do card na timeline
+      const card = document.getElementById(`appt-${currentApptId}`);
+      if (card) {
+        card.dataset.customerName = name;
+        card.dataset.phoneDisplay = maskPhone(dmEditPhone.value);
+        const nameEl = card.querySelector('.flex.items-baseline span.text-sm.font-medium, .flex.items-baseline span:nth-child(2)');
+        if (nameEl) nameEl.textContent = name;
+      }
+      toast('Cliente atualizado', 'success');
+    } else {
+      dmEditStatus.className = 'text-[10px] text-red-400';
+      dmEditStatus.textContent = data.error ?? 'Erro';
+    }
+  });
+
+  function openDetailModal(id) {
+    const appt = clientData.appts.find(a => String(a.id) === String(id));
+    if (!appt) return;
+    currentApptId = id;
+    currentMoveSlot = null;
+
+    dmName.textContent     = appt.customerName;
+    dmService.textContent  = `${appt.serviceName} · ${appt.barberName} · ${appt.price}`;
+    dmTime.textContent     = `${appt.timeLocal} → ${appt.endTimeLocal}`;
+    dmDuration.textContent = `${appt.durationMinutes}min`;
+    dmPrice.textContent    = appt.price;
+    dmPhone.textContent    = appt.customerPhoneDisplay || '—';
+    dmTel.href             = appt.telUrl;
+    dmWhats.href           = appt.whatsappUrl;
+    dmNotes.value          = appt.notes ?? '';
+    notesOriginal          = dmNotes.value;
+    dmNotesStatus.textContent = '';
+    dmNotesSave.classList.add('hidden');
+
+    // Edição de cliente
+    dmEditName.value      = appt.customerName;
+    dmEditPhone.value     = appt.customerPhoneDisplay;
+    dmEditBirthdate.value = formatBirthdateDisplay(appt.customerBirthdate);
+    editOriginal = { name: dmEditName.value, phone: dmEditPhone.value, birthdate: dmEditBirthdate.value };
+    dmEditSave.classList.add('hidden');
+    dmEditStatus.textContent = '';
+
+    // Carrega histórico assíncrono
+    loadHistory(id);
+
+    // Auditoria
+    const auditEl = document.getElementById('dm-audit');
+    const auditText = document.getElementById('dm-audit-text');
+    if (appt.lastModifiedLabel) {
+      auditEl?.classList.remove('hidden');
+      if (auditText) auditText.textContent = appt.lastModifiedLabel;
+    } else {
+      auditEl?.classList.add('hidden');
+    }
+
+    [dmComplete, dmNoshow, dmCancel].forEach(b => b.dataset.id = id);
+
+    // Mover horário: data atual default
+    dmMoveDate.value = clientData.date;
+    dmMoveDate.min = clientData.todayStr;
+    dmMoveSlots.innerHTML = '<span class="text-neutral-500">Selecione uma data acima.</span>';
+    dmMoveConfirm.disabled = true;
+
+    // Bloquear ações se status != confirmed
+    const isConfirmed = appt.status === 'confirmed';
+    [dmComplete, dmNoshow, dmCancel].forEach(b => {
+      b.disabled = !isConfirmed;
+      b.classList.toggle('opacity-40', !isConfirmed);
+      b.classList.toggle('cursor-not-allowed', !isConfirmed);
+    });
+    dmMoveDate.disabled = !isConfirmed;
+    dmMoveConfirm.disabled = true;
+    if (isConfirmed) loadMoveSlots();
+
+    detailModal.classList.remove('hidden');
+  }
+
+  function closeDetail() {
+    detailModal?.classList.add('hidden');
+    currentApptId = null;
+  }
+  dmClose?.addEventListener('click', closeDetail);
+  detailModal?.addEventListener('click', (e) => { if (e.target === detailModal) closeDetail(); });
+
+  // Copiar telefone
+  dmCopyPhone?.addEventListener('click', async () => {
+    const text = dmPhone?.textContent?.trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Telefone copiado', 'success');
+    } catch {
+      toast('Não foi possível copiar', 'error');
+    }
+  });
+
+  // Notas: mostra "salvar" se mudou
+  dmNotes?.addEventListener('input', () => {
+    const changed = dmNotes.value !== notesOriginal;
+    dmNotesSave?.classList.toggle('hidden', !changed);
+    if (changed) dmNotesStatus.textContent = '';
+  });
+  dmNotesSave?.addEventListener('click', async () => {
+    if (!currentApptId) return;
+    dmNotesSave.textContent = 'Salvando...';
+    dmNotesSave.disabled = true;
+    const { ok, data } = await callApi(`/api/admin/appointments/${currentApptId}/notes`, 'PATCH', {
+      notes: dmNotes.value,
+    });
+    dmNotesSave.disabled = false;
+    dmNotesSave.textContent = 'Salvar notas';
+    if (ok) {
+      notesOriginal = dmNotes.value;
+      dmNotesSave.classList.add('hidden');
+      dmNotesStatus.textContent = 'Notas salvas';
+      const appt = clientData.appts.find(a => String(a.id) === String(currentApptId));
+      if (appt) appt.notes = data.notes;
+    } else {
+      toast(data.error ?? 'Erro ao salvar notas', 'error');
+    }
+  });
+
+  // Reagendar: carrega slots ao mudar data
+  async function loadMoveSlots() {
+    if (!currentApptId) return;
+    const appt = clientData.appts.find(a => String(a.id) === String(currentApptId));
+    if (!appt) return;
+    const targetDate = dmMoveDate.value;
+    if (!targetDate) return;
+    dmMoveSlots.innerHTML = '<span class="text-neutral-500">Carregando horários...</span>';
+    dmMoveConfirm.disabled = true;
+    currentMoveSlot = null;
+
+    try {
+      const params = new URLSearchParams({
+        barberId: String(appt.barberId),
+        serviceId: '0', // não usa serviceId aqui, mas API exige; vou só pedir o slots por barberId
+        date: targetDate,
+      });
+      // /api/slots espera serviceId pra calcular duração. Como vamos manter o serviço,
+      // usamos a duração do próprio appt: adicionamos excludeAppointmentId pra liberar o slot atual.
+      params.set('excludeAppointmentId', String(appt.id));
+
+      // Sem serviceId fácil — pedir slots pra cada serviço seria lento. Vamos usar uma alternativa:
+      // gerar slots por step de 15min entre 08:00 e 19:00, sem chamar a API.
+      // (A API de reschedule revalida no servidor.)
+      dmMoveSlots.innerHTML = '';
+      const grid = document.createElement('div');
+      grid.className = 'grid grid-cols-4 gap-1.5 max-h-48 overflow-y-auto';
+
+      const STEP = 15; // 15 minutos entre slots
+      const startMin = clientData.startHour * 60;
+      const endMin   = (clientData.startHour + 11) * 60; // 08:00-19:00
+      const duration = appt.durationMinutes;
+
+      for (let m = startMin; m + duration <= endMin; m += STEP) {
+        const h = Math.floor(m / 60);
+        const mm = m % 60;
+        const label = `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+        // utc: targetDate local + h:mm → UTC adicionando 3h (Fortaleza UTC-3)
+        const [y, mo, d] = targetDate.split('-').map(Number);
+        const utc = new Date(Date.UTC(y, mo - 1, d, h + 3, mm)).toISOString();
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.dataset.iso = utc;
+        btn.className = 'text-xs px-2 py-1.5 border border-white/10 rounded text-neutral-300 hover:border-teal/40 hover:text-teal-light transition-colors tabular-nums';
+        // Marca o atual desabilitado
+        if (utc === '' /* impossivel */) {/* placeholder */}
+        btn.addEventListener('click', () => {
+          grid.querySelectorAll('button').forEach(b =>
+            b.classList.remove('bg-teal/20', 'border-teal/50', 'text-teal-light'));
+          btn.classList.add('bg-teal/20', 'border-teal/50', 'text-teal-light');
+          currentMoveSlot = utc;
+          dmMoveConfirm.disabled = false;
+        });
+        grid.appendChild(btn);
+      }
+      dmMoveSlots.appendChild(grid);
+    } catch {
+      dmMoveSlots.innerHTML = '<span class="text-red-400">Erro ao carregar.</span>';
+    }
+  }
+  dmMoveDate?.addEventListener('change', loadMoveSlots);
+
+  dmMoveConfirm?.addEventListener('click', async () => {
+    if (!currentApptId || !currentMoveSlot) return;
+    dmMoveConfirm.disabled = true;
+    dmMoveConfirm.textContent = 'Reagendando...';
+    const { ok, data } = await callApi(`/api/admin/appointments/${currentApptId}/reschedule`, 'POST', {
+      startsAt: currentMoveSlot,
+    });
+    dmMoveConfirm.textContent = 'Confirmar reagendamento';
+    if (ok) {
+      toast('Reagendado com sucesso. Recarregando...', 'success');
+      setTimeout(() => location.reload(), 800); // Reload pra reposicionar card na timeline
+    } else {
+      toast(data.error ?? 'Erro ao reagendar', 'error');
+      dmMoveConfirm.disabled = false;
+    }
+  });
+
+  // ESC fecha modais
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (!detailModal?.classList.contains('hidden')) closeDetail();
+      if (!confirmModal?.classList.contains('hidden')) closeConfirm(false);
+    }
+  });
+
+  // ─── Buraco clicável pra agendar ──────────────────────────────────────────
+  const emptyArea = document.getElementById('empty-click-area');
+  function readHourPx() {
+    const root = document.querySelector('.timeline-root');
+    if (!root) return 110;
+    const val = getComputedStyle(root).getPropertyValue('--hour-px').trim();
+    const n = parseFloat(val);
+    return isFinite(n) && n > 0 ? n : 110;
+  }
+  emptyArea?.addEventListener('click', (e) => {
+    if (e.target !== emptyArea) return;
+    const rect = emptyArea.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    const hourPx = readHourPx();
+    const minutesFromStart = Math.floor((offsetY / hourPx) * 60);
+    const snapped = Math.floor(minutesFromStart / 15) * 15;
+    const totalH = clientData.startHour * 60 + snapped;
+    const h = Math.floor(totalH / 60);
+    const mm = totalH % 60;
+    const timeStr = `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+
+    // Abre o form de agendamento manual
+    formBlock?.classList.add('hidden');
+    formManual?.classList.remove('hidden');
+    loadServices();
+    formManual?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Guarda preferência de horário pra pré-selecionar quando os slots carregarem
+    window.__preferredSlotTime = timeStr;
+    toast(`Selecione barbeiro e serviço para agendar às ${timeStr}`, 'info');
+  });
+
+  // ─── Toggle forms ────────────────────────────────────────────────────────────
   const formManual = document.getElementById('form-manual');
   const formBlock  = document.getElementById('form-block');
 
   document.getElementById('btn-manual')?.addEventListener('click', () => {
     formBlock?.classList.add('hidden');
     formManual?.classList.toggle('hidden');
-    if (!formManual?.classList.contains('hidden')) loadServices();
+    if (!formManual?.classList.contains('hidden')) {
+      loadServices();
+      formManual?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   });
 
   document.getElementById('btn-block')?.addEventListener('click', () => {
     formManual?.classList.add('hidden');
     formBlock?.classList.toggle('hidden');
+    if (!formBlock?.classList.contains('hidden')) {
+      formBlock?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   });
 
   document.getElementById('close-manual')?.addEventListener('click', () => formManual?.classList.add('hidden'));
   document.getElementById('close-block')?.addEventListener('click',  () => formBlock?.classList.add('hidden'));
 
   // ─── Manual booking form ─────────────────────────────────────────────────────
-
   let selectedSlot = null;
 
   async function loadServices() {
@@ -523,14 +1804,23 @@ const clientData = {
       slotsWrap.innerHTML = '';
       const grid = document.createElement('div');
       grid.className = 'flex flex-wrap gap-2';
-      data.slots.forEach(isoStr => {
-        const [h, min] = new Date(isoStr).toISOString().slice(11, 16).split(':').map(Number);
-        const hLocal   = (h - 3 + 24) % 24;
-        const label    = `${String(hLocal).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
-        const btn      = document.createElement('button');
+      const preferred = window.__preferredSlotTime;
+      let preferredBtn = null;
+
+      data.slots.forEach(slot => {
+        const isoStr = typeof slot === 'string' ? slot : slot.utc;
+        const label  = typeof slot === 'string'
+          ? (() => {
+              const [h, min] = new Date(isoStr).toISOString().slice(11, 16).split(':').map(Number);
+              const hLocal   = (h - 3 + 24) % 24;
+              return `${String(hLocal).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+            })()
+          : slot.time;
+        const btn = document.createElement('button');
         btn.type        = 'button';
         btn.textContent = label;
         btn.dataset.iso = isoStr;
+        btn.dataset.time = label;
         btn.className   = 'text-xs px-3 py-1.5 border border-white/10 rounded text-neutral-400 hover:border-teal/40 hover:text-teal-light transition-colors';
         btn.addEventListener('click', () => {
           slotsWrap.querySelectorAll('button').forEach(b =>
@@ -539,8 +1829,17 @@ const clientData = {
           selectedSlot = isoStr;
         });
         grid.appendChild(btn);
+
+        if (preferred && label === preferred) preferredBtn = btn;
       });
       slotsWrap.appendChild(grid);
+
+      // Auto-seleciona horário preferido (vindo de click em buraco)
+      if (preferredBtn) {
+        preferredBtn.click();
+        preferredBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        window.__preferredSlotTime = null;
+      }
     } catch {
       slotsWrap.innerHTML = '<span class="text-red-400">Erro ao carregar horários.</span>';
     }
@@ -593,7 +1892,6 @@ const clientData = {
   });
 
   // ─── Block time form ──────────────────────────────────────────────────────────
-
   document.getElementById('b-submit')?.addEventListener('click', async () => {
     const errorEl  = document.getElementById('b-error');
     const submitBtn = document.getElementById('b-submit');
@@ -634,4 +1932,69 @@ const clientData = {
       submitBtn.textContent = 'Bloquear';
     }
   });
+
+  // ─── Scroll auto pra "Agora" se for hoje ──────────────────────────────────────
+  // Restaura posição se vier de um auto-refresh
+  const restoreScroll = sessionStorage.getItem('dia-scroll-y');
+  if (restoreScroll) {
+    sessionStorage.removeItem('dia-scroll-y');
+    requestAnimationFrame(() => window.scrollTo(0, parseInt(restoreScroll, 10)));
+  } else if (date === clientData.todayStr) {
+    requestAnimationFrame(() => {
+      const tlArea = document.getElementById('timeline-area');
+      const now = tlArea?.querySelector('.bg-teal.h-px');
+      if (now) {
+        const rect = now.getBoundingClientRect();
+        window.scrollTo({ top: window.scrollY + rect.top - 200, behavior: 'smooth' });
+      }
+    });
+  }
+
+  // ─── Auto-refresh discreto ──────────────────────────────────────────────────
+  // A cada 60s verifica se mudou (count ou maxModified). Se sim e nada está
+  // em foco, salva scroll e recarrega.
+  (function setupAutoRefresh() {
+    // Snapshot inicial: conta direto do DOM
+    const initialCount = document.querySelectorAll('.appt-card').length;
+    let lastKnownCount = initialCount;
+    let lastKnownMod   = ''; // primeira chamada já vai popular
+
+    async function poll() {
+      // Não checa em outras abas / janela escondida
+      if (document.hidden) return;
+      // Não recarrega se modal aberto ou form em uso
+      if (!detailModal?.classList.contains('hidden')) return;
+      if (!confirmModal?.classList.contains('hidden')) return;
+      if (!formManual?.classList.contains('hidden')) return;
+      if (!formBlock?.classList.contains('hidden')) return;
+      // Não recarrega se usuário tá digitando algo
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return;
+
+      try {
+        const params = new URLSearchParams({ date });
+        if (filterBarberId) params.set('barber', String(filterBarberId));
+        const res = await fetch(`/api/admin/appointments/count?${params}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const newCount = data.count;
+        const newMod   = data.maxModified ?? '';
+
+        // 1ª chamada: só guarda o baseline
+        if (!lastKnownMod && lastKnownCount === initialCount) {
+          lastKnownMod = newMod;
+          lastKnownCount = newCount;
+          return;
+        }
+
+        if (newCount !== lastKnownCount || newMod !== lastKnownMod) {
+          // Mudou no servidor — salva scroll e recarrega
+          sessionStorage.setItem('dia-scroll-y', String(window.scrollY));
+          location.reload();
+        }
+      } catch { /* silencioso */ }
+    }
+
+    setInterval(poll, 60_000);
+  })();
 </script>

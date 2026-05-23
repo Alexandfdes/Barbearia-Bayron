@@ -28,6 +28,14 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   let ip = 'unknown';
   try { ip = clientAddress; } catch { /* noop */ }
 
+  // 2 camadas de rate limit:
+  // (1) Global por IP — protege contra varredura de slugs (15 tentativas / 15min)
+  // (2) Por IP+slug — protege contra brute force de senha de um slug específico (5 / 15min)
+  const globalRl = checkRateLimit(`admin-login-global:${ip}`, { maxTries: 15 });
+  if (!globalRl.ok) {
+    return json({ error: `Muitas tentativas deste IP. Tente em ${globalRl.retryAfterSecs}s` }, 429);
+  }
+
   const rlKey = `${ip}:${slug}`;
   const rl    = checkRateLimit(rlKey);
   if (!rl.ok) {

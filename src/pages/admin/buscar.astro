@@ -1,0 +1,209 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { barbers } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+
+const barberRow = db
+  .select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers)
+  .where(eq(barbers.id, session.barberId))
+  .all()[0];
+
+if (!barberRow) return Astro.redirect('/admin/login');
+---
+
+<AdminLayout title="Buscar cliente" barberName={barberRow.name} role={session.role}>
+
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-20">
+
+    <section>
+      <label for="phone-input" class="block text-xs text-neutral-500 uppercase tracking-widest mb-2">
+        Telefone do cliente
+      </label>
+      <input
+        id="phone-input"
+        type="tel"
+        autocomplete="off"
+        placeholder="Digite o telefone (4+ dígitos)"
+        class="w-full bg-dark-surface border border-white/10 rounded px-4 py-3 text-base text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-teal/50"
+      />
+      <p id="hint" class="text-xs text-neutral-500 mt-2">
+        Use esta busca para achar o agendamento de um cliente que perdeu o link.
+      </p>
+    </section>
+
+    <section>
+      <div class="flex items-center justify-between mb-2">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Resultados</p>
+        <p id="count" class="text-xs text-neutral-600"></p>
+      </div>
+
+      <div id="empty-state" class="bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
+        <p class="text-neutral-500 text-sm">Digite o telefone para começar.</p>
+      </div>
+
+      <div id="loading" class="hidden bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
+        <p class="text-neutral-500 text-sm">Buscando...</p>
+      </div>
+
+      <div id="results" class="hidden space-y-2"></div>
+    </section>
+
+  </main>
+
+</AdminLayout>
+
+<script>
+  const STATUS_LABEL: Record<string, { text: string; cls: string; border: string }> = {
+    confirmed: { text: '● Confirmado', cls: 'text-teal-light',   border: 'border-teal/15'        },
+    cancelled: { text: '✕ Cancelado',  cls: 'text-red-400',      border: 'border-red-500/10'     },
+    completed: { text: '✓ Concluído',  cls: 'text-neutral-400',  border: 'border-white/5'        },
+    no_show:   { text: '✗ No-show',    cls: 'text-yellow-500',   border: 'border-yellow-500/15'  },
+  };
+
+  const inputEl   = document.getElementById('phone-input') as HTMLInputElement | null;
+  const hintEl    = document.getElementById('hint');
+  const emptyEl   = document.getElementById('empty-state');
+  const loadingEl = document.getElementById('loading');
+  const resultsEl = document.getElementById('results');
+  const countEl   = document.getElementById('count');
+
+  if (!inputEl || !hintEl || !emptyEl || !loadingEl || !resultsEl || !countEl) {
+    throw new Error('Elementos da página de busca não encontrados');
+  }
+
+  let lastReqId = 0;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showState(state: 'empty' | 'loading' | 'results') {
+    emptyEl!.classList.toggle('hidden',   state !== 'empty');
+    loadingEl!.classList.toggle('hidden', state !== 'loading');
+    resultsEl!.classList.toggle('hidden', state !== 'results');
+  }
+
+  function escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function renderResults(results: Array<Record<string, unknown>>) {
+    if (results.length === 0) {
+      resultsEl!.innerHTML = `
+        <div class="bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
+          <p class="text-neutral-500 text-sm">Nenhum agendamento encontrado para esse telefone.</p>
+        </div>`;
+      countEl!.textContent = '';
+      return;
+    }
+
+    countEl!.textContent = `${results.length} ${results.length === 1 ? 'agendamento' : 'agendamentos'}`;
+
+    resultsEl!.innerHTML = results.map(r => {
+      const status = STATUS_LABEL[r.status as string] ?? { text: r.status as string, cls: 'text-neutral-400', border: 'border-white/5' };
+      const link   = `${window.location.origin}/a/${r.manageToken}`;
+      return `
+        <div class="bg-dark-card border ${status.border} rounded-md p-4">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <p class="text-neutral-100 font-medium truncate">${escapeHtml(String(r.customerName))}</p>
+              <p class="text-neutral-500 text-sm">${escapeHtml(String(r.customerPhone))}</p>
+              <p class="text-neutral-400 text-sm mt-2">
+                ${escapeHtml(String(r.serviceName))} · ${escapeHtml(String(r.barberName))}
+              </p>
+              <p class="text-neutral-500 text-xs mt-0.5 tabular-nums">
+                ${r.dateLocal} às ${r.timeLocal}
+              </p>
+            </div>
+            <span class="text-xs ${status.cls} whitespace-nowrap shrink-0">${status.text}</span>
+          </div>
+          <button
+            data-action="copy"
+            data-link="${escapeHtml(link)}"
+            class="mt-3 w-full border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light text-xs font-medium py-2 rounded transition-colors">
+            Copiar link do cliente
+          </button>
+        </div>`;
+    }).join('');
+  }
+
+  async function search(phoneRaw: string) {
+    const digits = phoneRaw.replace(/\D/g, '');
+    if (digits.length < 4) {
+      showState('empty');
+      countEl!.textContent = '';
+      hintEl!.textContent = 'Use esta busca para achar o agendamento de um cliente que perdeu o link.';
+      return;
+    }
+
+    hintEl!.textContent = `Buscando por ${digits.length} dígitos: ${digits}`;
+    showState('loading');
+
+    const reqId = ++lastReqId;
+    try {
+      const res  = await fetch(`/api/admin/appointments/search?phone=${encodeURIComponent(digits)}`);
+      if (reqId !== lastReqId) return; // resposta velha, ignora
+      if (!res.ok) {
+        resultsEl!.innerHTML = `
+          <div class="bg-dark-card border border-red-500/20 rounded-md px-5 py-6 text-center">
+            <p class="text-red-400 text-sm">Erro ao buscar (${res.status}).</p>
+          </div>`;
+        showState('results');
+        return;
+      }
+      const data = await res.json() as { results: Array<Record<string, unknown>> };
+      renderResults(data.results ?? []);
+      showState('results');
+    } catch {
+      if (reqId !== lastReqId) return;
+      resultsEl!.innerHTML = `
+        <div class="bg-dark-card border border-red-500/20 rounded-md px-5 py-6 text-center">
+          <p class="text-red-400 text-sm">Erro de conexão.</p>
+        </div>`;
+      showState('results');
+    }
+  }
+
+  inputEl.addEventListener('input', (e) => {
+    const v = (e.target as HTMLInputElement).value;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => search(v), 300);
+  });
+
+  // Click handler para "Copiar link"
+  resultsEl.addEventListener('click', async (e) => {
+    const btn = (e.target as HTMLElement).closest('[data-action="copy"]') as HTMLButtonElement | null;
+    if (!btn) return;
+    const link = btn.dataset.link ?? '';
+    if (!link) return;
+
+    try {
+      await navigator.clipboard.writeText(link);
+      const originalText = btn.textContent;
+      btn.textContent = '✓ Link copiado';
+      btn.classList.add('text-teal-light', 'border-teal/30');
+      btn.classList.remove('text-neutral-400', 'border-white/10');
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.classList.remove('text-teal-light', 'border-teal/30');
+        btn.classList.add('text-neutral-400', 'border-white/10');
+      }, 1500);
+    } catch {
+      // Fallback: prompt para o usuário copiar manualmente
+      window.prompt('Copie o link manualmente:', link);
+    }
+  });
+
+  // Auto-focus no input ao carregar
+  inputEl.focus();
+</script>
