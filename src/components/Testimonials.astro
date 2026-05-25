@@ -2,8 +2,8 @@
 import depoimentos from '../data/depoimentos.json';
 
 const GOOGLE_REVIEWS_URL = "https://www.google.com/maps/search/Barbearia+Bayron+Mossor%C3%B3+RN/";
-const RATING = 4.9;
-const REVIEW_COUNT = 127;
+const RATING = 5.0;
+const REVIEW_COUNT = 227;
 
 const ldJson = {
   "@context": "https://schema.org",
@@ -37,7 +37,7 @@ const ldJson = {
     <!-- Nota média -->
     <div class="flex flex-col sm:flex-row items-center justify-center gap-6 mb-14">
       <div class="flex items-center gap-4 bg-dark-card border border-white/5 rounded-md px-7 py-5">
-        <span class="text-5xl font-bold text-teal-light leading-none">{RATING}</span>
+        <span class="text-5xl font-bold text-teal-light leading-none">{RATING.toFixed(1).replace('.', ',')}</span>
         <div>
           <div class="flex gap-1 mb-1.5" aria-label={`${RATING} de 5 estrelas`}>
             {Array.from({ length: 5 }).map(() => (

@@ -8,6 +8,12 @@ interface Props {
 }
 const { title = 'Admin', barberName, role } = Astro.props;
 const path = Astro.url.pathname;
+
+// Determina dinamicamente para onde o botão "Voltar" deve apontar de forma inteligente e universal:
+// - Se estiver na tela principal do Admin (/admin), o botão de voltar leva ao Portal (/portal).
+// - Se estiver em qualquer outra subpágina (ex: buscar, serviços, agenda do dia), leva de volta à tela inicial do Admin (/admin).
+const normalizedPath = path.endsWith('/') && path.length > 1 ? path.slice(0, -1) : path;
+const backUrl = normalizedPath === '/admin' ? '/portal' : '/admin';
 ---
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -22,15 +28,24 @@ const path = Astro.url.pathname;
     <!-- Top header -->
     <header class="border-b border-white/5 px-4 py-3 bg-dark">
       <div class="max-w-3xl mx-auto flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <a href="/admin" class="text-sm font-medium text-neutral-200 hover:text-neutral-100 transition-colors">
-            Bayron Admin
+        <div class="flex items-center gap-3">
+          <a href={backUrl} class="text-xs text-neutral-400 hover:text-neutral-200 transition-colors flex items-center gap-1.5 font-medium">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+            Voltar
           </a>
-          {role === 'admin' && (
-            <span class="text-xs bg-teal/20 text-teal-light border border-teal/30 px-2 py-0.5 rounded-full">
-              Admin
-            </span>
-          )}
+          <div class="w-px h-3.5 bg-white/10"></div>
+          <div class="flex items-center gap-2">
+            <a href="/admin" class="text-sm font-medium text-neutral-200 hover:text-neutral-100 transition-colors">
+              Bayron Admin
+            </a>
+            {role === 'admin' && (
+              <span class="text-xs bg-teal/20 text-teal-light border border-teal/30 px-2 py-0.5 rounded-full">
+                Admin
+              </span>
+            )}
+          </div>
         </div>
         <div class="flex items-center gap-3">
           <span class="text-xs text-neutral-500 hidden sm:block">{barberName}</span>

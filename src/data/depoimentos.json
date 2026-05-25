@@ -1,50 +1,50 @@
 [
   {
     "id": 1,
-    "name": "João Victor",
+    "name": "Edgledson Oliveira",
     "rating": 5,
-    "text": "Melhor barbearia de Mossoró sem dúvida! Fui pelo degradê e saí com o combo completo. O Bayron tem uma precisão no trabalho que você não acha em outro lugar. Virei cliente fixo.",
-    "date": "Há 1 semana",
-    "initial": "J"
+    "text": "Sou cliente há 8 anos e nunca decepcionam, tanto no atendimento quanto no conforto que oferecem a nós clientes. Resumindo: saio sempre satisfeito!",
+    "date": "Há 11 meses",
+    "initial": "E"
   },
   {
     "id": 2,
-    "name": "Marcos Henrique",
+    "name": "Victor Natan",
     "rating": 5,
-    "text": "Ambiente top, atendimento nota 10. Trouxe meu filho para o 1º corte e o certificado foi um detalhe incrível. Ele ficou todo animado. Recomendo demais!",
-    "date": "Há 2 semanas",
-    "initial": "M"
+    "text": "Barbearia com profissionais bastante atenciosos, clima agradável e muito aconchegante. Você corta o cabelo e ainda ganha uma massagem nos pés e lavagem! Sem pontos negativos.",
+    "date": "Há 3 semanas",
+    "initial": "V"
   },
   {
     "id": 3,
-    "name": "Rafael Sousa",
+    "name": "João Lucas (Local Guide)",
     "rating": 5,
-    "text": "Já rodei bastante barbearia por aí, mas o capricho do Bayron é diferente. Barba alinhada, sobrancelha no ponto, e ainda sai com a pele limpa. Vale muito o preço.",
-    "date": "Há 3 semanas",
-    "initial": "R"
+    "text": "Bom estabelecimento. O atendimento é excelente e os profissionais são muito simpáticos e atenciosos. A barbearia atende tanto por meio de reserva de horário marcado quanto por ordem de chegada.",
+    "date": "Há 1 mês",
+    "initial": "J"
   },
   {
     "id": 4,
-    "name": "Tiago Fernandes",
+    "name": "Pablo Kaio",
     "rating": 5,
-    "text": "Comprei o Tônico Boris e minha barba transformou em 3 semanas. Produto de qualidade real. O pessoal da barbearia ainda me ensinou a aplicar direito. Serviço e produto juntos — difícil bater.",
-    "date": "Há 1 mês",
-    "initial": "T"
+    "text": "Melhor barbearia que já fui! Atendimento ótimo, barbeiros muito bons e o local é excelente. Tem massagem nas cadeiras, que é o que eu mais gosto na barbearia!",
+    "date": "Há 2 meses",
+    "initial": "P"
   },
   {
     "id": 5,
-    "name": "Anderson Lima",
+    "name": "Israel Alves",
     "rating": 5,
-    "text": "Agendei pelo TopSalão e foi muito prático. Não fiquei esperando nem 5 minutos. Corte degradê perfeito, barba bem feita e saí pagando o preço do combo. Voltarei com certeza.",
-    "date": "Há 1 mês",
-    "initial": "A"
+    "text": "Tenho o maior prazer em cortar o meu cabelo com o Bayron! O cara é um profissional espetacular e deixa o cliente super satisfeito. O atendimento é ótimo, e o ambiente é super confortável e agradável para esperar com toda tranquilidade!",
+    "date": "Há 1 semana",
+    "initial": "I"
   },
   {
     "id": 6,
-    "name": "Carlos Eduardo",
+    "name": "Renan Oliveira",
     "rating": 5,
-    "text": "Fui indicado por um colega e não me arrependi. O espaço é limpo, o atendimento é personalizado e o resultado fala por si. Tem uma atenção aos detalhes que faz toda a diferença.",
-    "date": "Há 2 meses",
-    "initial": "C"
+    "text": "É uma experiência muito boa. O pessoal é extremamente educado e receptivo. Indico e chego a dizer que é uma das melhores barbearias de Mossoró. Por isso me tornei cliente fiel!",
+    "date": "Há 2 semanas",
+    "initial": "R"
   }
 ]

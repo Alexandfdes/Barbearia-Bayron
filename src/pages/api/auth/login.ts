@@ -23,7 +23,8 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return json({ error: 'Campos obrigatórios' }, 400);
 
-  const { slug, password } = parsed.data;
+  const { slug: rawSlug, password } = parsed.data;
+  const slug = rawSlug.toLowerCase();
 
   let ip = 'unknown';
   try { ip = clientAddress; } catch { /* noop */ }
