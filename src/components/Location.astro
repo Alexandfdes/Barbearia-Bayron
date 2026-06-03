@@ -1,4 +1,7 @@
 ---
+import { ADDRESS, GOOGLE_MAPS_URL, BUSINESS_HOURS, getWhatsAppUrl } from '../config';
+
+const whatsappUrl = getWhatsAppUrl('Olá! Vim pelo site e gostaria de agendar um horário.');
 ---
 
 <section id="localizacao" class="py-12 md:py-20 bg-dark-alt">
@@ -7,20 +10,92 @@
       <div class="w-10 h-px bg-teal mx-auto mb-6"></div>
       <span class="text-teal-light text-sm font-medium tracking-[0.25em] uppercase">Onde nos encontrar</span>
       <h2 class="font-serif text-3xl md:text-5xl font-medium mt-3 mb-4 text-neutral-50">Localização</h2>
-      <p class="text-neutral-400 max-w-lg mx-auto">Venha nos visitar em Mossoró/RN.</p>
+      <p class="text-neutral-400 max-w-lg mx-auto">Venha nos visitar em {ADDRESS.city}.</p>
     </div>
 
-    <div class="rounded-2xl overflow-hidden border border-white/10" style="height: 380px;">
-      <iframe
-        title="Localização da Barbearia Bayron em Mossoró/RN"
-        src="https://www.google.com/maps?q=Barbearia+Bayron+R.+Jaen+Menescal+174+Mossor%C3%B3+RN&output=embed"
-        width="100%"
-        height="100%"
-        style="border:0"
-        loading="lazy"
-        referrerpolicy="no-referrer-when-downgrade"
-        allowfullscreen
-      ></iframe>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
+
+      <!-- Info -->
+      <div class="flex flex-col justify-between gap-6">
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-6 items-start">
+          <!-- Endereço -->
+          <div class="flex items-start gap-4">
+            <div class="shrink-0 w-10 h-10 rounded-full bg-teal/10 border border-teal/20 flex items-center justify-center">
+              <svg class="w-5 h-5 text-teal-light" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+              </svg>
+            </div>
+            <div>
+              <h3 class="text-sm font-medium uppercase tracking-[0.2em] text-neutral-500 mb-1">Endereço</h3>
+              <p class="text-neutral-100 text-lg leading-snug">{ADDRESS.street}</p>
+              <p class="text-neutral-400">{ADDRESS.city}</p>
+            </div>
+          </div>
+
+          <!-- Horários -->
+          <div class="flex items-start gap-4">
+            <div class="shrink-0 w-10 h-10 rounded-full bg-teal/10 border border-teal/20 flex items-center justify-center">
+              <svg class="w-5 h-5 text-teal-light" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </div>
+            <div class="flex-1">
+              <h3 class="text-sm font-medium uppercase tracking-[0.2em] text-neutral-500 mb-2">Horário</h3>
+              <div class="space-y-1.5">
+                {BUSINESS_HOURS.map(h => (
+                  <div class="flex items-baseline justify-between gap-4">
+                    <span class="text-neutral-200 text-sm">{h.label}</span>
+                    <span class:list={['text-sm tabular-nums', h.closed ? 'text-neutral-600' : 'text-neutral-400']}>{h.hours}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ações -->
+        <div class="flex flex-col sm:flex-row gap-3 mt-2">
+          <a
+            href={GOOGLE_MAPS_URL}
+            target="_blank"
+            rel="noopener"
+            class="flex-1 w-full inline-flex items-center justify-center gap-2 bg-teal hover:bg-teal-hover text-white font-bold tracking-widest uppercase text-sm px-6 py-3.5 rounded-md transition-colors duration-300"
+          >
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+            </svg>
+            Traçar rota
+          </a>
+          <a
+            href={whatsappUrl}
+            target="_blank"
+            rel="noopener"
+            class="flex-1 w-full inline-flex items-center justify-center gap-2 border border-white/15 hover:border-teal/40 text-neutral-200 hover:text-white font-medium text-sm px-6 py-3.5 rounded-md transition-colors duration-300"
+          >
+            <svg class="w-5 h-5 text-teal-light" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+            </svg>
+            Falar no WhatsApp
+          </a>
+        </div>
+      </div>
+
+      <!-- Mapa -->
+      <div class="rounded-2xl overflow-hidden border border-white/10 min-h-[300px] lg:min-h-full">
+        <iframe
+          title="Localização da Barbearia Bayron em Mossoró/RN"
+          src="https://www.google.com/maps?q=Barbearia+Bayron+R.+Jaen+Menescal+174+Mossor%C3%B3+RN&output=embed"
+          width="100%"
+          height="100%"
+          style="border:0; min-height: 300px;"
+          loading="lazy"
+          referrerpolicy="no-referrer-when-downgrade"
+          allowfullscreen
+        ></iframe>
+      </div>
+
     </div>
   </div>
 </section>

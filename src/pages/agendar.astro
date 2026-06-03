@@ -6,17 +6,20 @@ import Layout from '../layouts/Layout.astro';
   title="Agendar — Barbearia Bayron"
   description="Agende seu horário online na Barbearia Bayron em Mossoró/RN. Rápido, fácil e sem espera."
 >
-  <div class="min-h-screen bg-dark">
+  <div class="min-h-screen bg-dark relative overflow-hidden">
+    <!-- Glows decorativos de fundo para estética premium -->
+    <div class="absolute top-[-25%] left-[-25%] w-[80%] h-[80%] rounded-full bg-forest-glow/15 blur-[140px] pointer-events-none"></div>
+    <div class="absolute bottom-[-25%] right-[-25%] w-[80%] h-[80%] rounded-full bg-teal/5 blur-[140px] pointer-events-none"></div>
 
     <!-- Header mínimo -->
     <div class="border-b border-white/5 px-4 py-4">
       <div class="max-w-2xl mx-auto flex items-center justify-between">
-        <a href="/" class="text-neutral-400 hover:text-neutral-200 text-sm flex items-center gap-1.5 transition-colors">
+        <button id="header-back-btn" class="text-neutral-400 hover:text-neutral-200 text-sm flex items-center gap-1.5 transition-colors cursor-pointer bg-transparent border-0 p-0 outline-none">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
           </svg>
-          Início
-        </a>
+          Voltar
+        </button>
         <span class="text-neutral-400 text-sm font-medium">Barbearia Bayron</span>
       </div>
     </div>
@@ -62,6 +65,7 @@ let selBarber: BarberOption | null = null;
 let selDate = '';
 let loadedSlots: SlotInfo[] = [];
 let selSlot: SlotInfo | null = null;
+let currentStep = 1;
 // Chave de idempotência: gerada UMA vez quando o user chega no step 4.
 // Se ele clicar duas vezes no Confirmar, ambos POSTs mandam a mesma chave
 // e o backend retorna o mesmo agendamento (sem criar duplicata).
@@ -74,6 +78,32 @@ function generateIdempotencyKey(): string {
 // ── Elementos ─────────────────────────────────────────────────────────────────
 const wizard  = document.getElementById('wizard')!;
 const progress = document.getElementById('progress')!;
+const headerBackBtn = document.getElementById('header-back-btn')!;
+
+headerBackBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (currentStep === 1) {
+    window.location.href = '/';
+  } else if (currentStep === 2) {
+    selService = null;
+    selBarber = null;
+    selDate = '';
+    loadedSlots = [];
+    selSlot = null;
+    setProgress(1);
+    renderStep1();
+  } else if (currentStep === 3) {
+    selBarber = null;
+    selDate = '';
+    loadedSlots = [];
+    selSlot = null;
+    renderStep2();
+  } else if (currentStep === 4) {
+    selSlot = null;
+    renderStep3();
+    if (selDate && loadedSlots.length) renderSlots();
+  }
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const DAYS  = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
@@ -107,6 +137,7 @@ function stepHeader(title: string, subtitle: string) {
 
 // ── Progresso ─────────────────────────────────────────────────────────────────
 function setProgress(step: number) {
+  currentStep = step;
   progress.style.opacity = '1';
   for (let i = 1; i <= 4; i++) {
     const dot = progress.querySelector(`[data-dot="${i}"]`) as HTMLElement;
@@ -152,8 +183,10 @@ function renderStep1() {
   `).join('');
 
   wizard.innerHTML = `
-    ${stepHeader('Escolha o serviço', 'Passo 1 de 4')}
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${cards}</div>`;
+    <div class="animate-fade-in">
+      ${stepHeader('Escolha o serviço', 'Passo 1 de 4')}
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${cards}</div>
+    </div>`;
 }
 
 // ── Step 2: Barbeiros ─────────────────────────────────────────────────────────
@@ -175,9 +208,11 @@ function renderStep2() {
   `).join('');
 
   wizard.innerHTML = `
-    ${stepHeader('Escolha o barbeiro', `Serviço: <span class="text-neutral-300">${selService.name}</span>`)}
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">${cards}</div>
-    ${backBtn(1, 'Alterar serviço')}`;
+    <div class="animate-fade-in">
+      ${stepHeader('Escolha o barbeiro', `Serviço: <span class="text-neutral-300">${selService.name}</span>`)}
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">${cards}</div>
+      ${backBtn(1, 'Alterar serviço')}
+    </div>`;
 }
 
 // ── Step 3: Data & Hora ───────────────────────────────────────────────────────
@@ -211,7 +246,7 @@ function renderStep3(slotsContent?: string) {
     let cls: string;
     if (closed)      cls = 'flex flex-col items-center py-3 px-2 rounded-md border border-white/5 min-w-[54px] opacity-30 cursor-not-allowed';
     else if (active) cls = 'flex flex-col items-center py-3 px-2 rounded-md border border-teal bg-teal/10 text-teal-light min-w-[54px] cursor-pointer';
-    else             cls = 'flex flex-col items-center py-3 px-2 rounded-md border border-white/5 hover:border-teal/30 text-neutral-300 hover:text-white min-w-[54px] cursor-pointer transition-colors';
+    else             cls = 'flex flex-col items-center py-3 px-2 rounded-md border border-white/5 hover:border-teal/30 hover:bg-teal/5 text-neutral-300 hover:text-teal-light min-w-[54px] cursor-pointer transition-all duration-200';
 
     return `<button ${closed ? 'disabled' : `data-action="select-date" data-value="${d.dateStr}"`}
       class="${cls}">
@@ -224,12 +259,14 @@ function renderStep3(slotsContent?: string) {
   const defaultSlots = `<p class="text-neutral-500 text-sm text-center py-8">Selecione um dia acima para ver os horários</p>`;
 
   wizard.innerHTML = `
-    ${stepHeader('Escolha o dia e horário', `${selService.name} · ${selBarber.name}`)}
-    <div class="overflow-x-auto -mx-4 px-4 pb-2">
-      <div id="date-row" class="flex gap-2 w-max">${datePicker}</div>
-    </div>
-    <div id="slots-area" class="mt-6">${slotsContent ?? defaultSlots}</div>
-    ${backBtn(2, 'Alterar barbeiro')}`;
+    <div class="animate-fade-in">
+      ${stepHeader('Escolha o dia e horário', `${selService.name} · ${selBarber.name}`)}
+      <div class="overflow-x-auto no-scrollbar -mx-4 px-4 pb-2">
+        <div id="date-row" class="flex gap-2 w-max">${datePicker}</div>
+      </div>
+      <div id="slots-area" class="mt-6">${slotsContent ?? defaultSlots}</div>
+      ${backBtn(2, 'Alterar barbeiro')}
+    </div>`;
 
   // Rola a data selecionada para o centro
   if (selDate) {
@@ -253,7 +290,7 @@ function renderSlots() {
     const active = selSlot?.utc === s.utc;
     const cls = active
       ? 'px-4 py-3 bg-teal/20 border border-teal rounded-md text-sm font-semibold text-teal-light cursor-pointer transition-all'
-      : 'px-4 py-3 bg-dark-card border border-white/10 hover:border-teal/40 hover:text-white rounded-md text-sm font-medium text-neutral-400 cursor-pointer transition-all';
+      : 'px-4 py-3 bg-dark-card border border-white/10 hover:border-teal/40 hover:bg-teal/5 hover:text-teal-light rounded-md text-sm font-medium text-neutral-400 cursor-pointer transition-all duration-200';
     return `<button data-action="select-slot" data-value="${s.utc}" data-time="${s.time}" class="${cls}">${s.time}</button>`;
   }).join('');
 
@@ -289,65 +326,67 @@ function renderStep4() {
   const dateDisp = `${d}/${m}/${y}`;
 
   wizard.innerHTML = `
-    ${stepHeader('Seus dados', 'Passo 4 de 4 · Quase lá!')}
+    <div class="animate-fade-in">
+      ${stepHeader('Seus dados', 'Passo 4 de 4 · Quase lá!')}
 
-    <div class="bg-dark-card border border-white/5 rounded-md p-4 mb-6 space-y-2.5 text-sm">
-      <div class="flex justify-between text-sm">
-        <span class="text-neutral-400">Serviço</span>
-        <span class="text-neutral-200">${selService.name}</span>
-      </div>
-      <div class="flex justify-between text-sm">
-        <span class="text-neutral-400">Barbeiro</span>
-        <span class="text-neutral-200">${selBarber.name}</span>
-      </div>
-      <div class="flex justify-between text-sm">
-        <span class="text-neutral-400">Data</span>
-        <span class="text-neutral-200">${dateDisp}</span>
-      </div>
-      <div class="flex justify-between text-sm">
-        <span class="text-neutral-400">Horário</span>
-        <span class="text-neutral-200">${selSlot.time}</span>
-      </div>
-      <div class="flex justify-between text-sm border-t border-white/5 pt-2.5 mt-1">
-        <span class="text-neutral-300 font-medium">Total</span>
-        <span class="text-teal-light font-semibold">${fmt(selService.priceCents)}</span>
-      </div>
-    </div>
-
-    <form id="booking-form" class="space-y-4">
-      <div>
-        <label class="block text-sm text-neutral-400 mb-1.5">Seu nome completo</label>
-        <input id="inp-name" type="text" placeholder="Ex: João Silva" autocomplete="name"
-          class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm"
-          required minlength="2" maxlength="100" />
-      </div>
-      <div>
-        <label class="block text-sm text-neutral-400 mb-1.5">
-          WhatsApp <span class="text-neutral-600 font-normal">(para avisar a barbearia)</span>
-        </label>
-        <input id="inp-phone" type="tel" placeholder="(88) 99999-0000" autocomplete="tel"
-          class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm"
-          required />
-      </div>
-      <div>
-        <label class="block text-sm text-neutral-400 mb-1.5">
-          Data de nascimento <span class="text-neutral-600 font-normal">(para acessar seus agendamentos depois)</span>
-        </label>
-        <input id="inp-birthdate" type="text" inputmode="numeric" autocomplete="bday"
-          placeholder="dd/mm/aaaa" maxlength="10"
-          class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm tabular-nums"
-          required />
+      <div class="bg-dark-card border border-white/5 rounded-md p-4 mb-6 space-y-2.5 text-sm">
+        <div class="flex justify-between text-sm">
+          <span class="text-neutral-400">Serviço</span>
+          <span class="text-neutral-200">${selService.name}</span>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span class="text-neutral-400">Barbeiro</span>
+          <span class="text-neutral-200">${selBarber.name}</span>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span class="text-neutral-400">Data</span>
+          <span class="text-neutral-200">${dateDisp}</span>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span class="text-neutral-400">Horário</span>
+          <span class="text-neutral-200">${selSlot.time}</span>
+        </div>
+        <div class="flex justify-between text-sm border-t border-white/5 pt-2.5 mt-1">
+          <span class="text-neutral-300 font-medium">Total</span>
+          <span class="text-teal-light font-semibold">${fmt(selService.priceCents)}</span>
+        </div>
       </div>
 
-      <p id="form-error" class="hidden text-red-400 text-sm"></p>
+      <form id="booking-form" class="space-y-4">
+        <div>
+          <label class="block text-sm text-neutral-400 mb-1.5">Seu nome completo</label>
+          <input id="inp-name" type="text" placeholder="Ex: João Silva" autocomplete="name"
+            class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm"
+            required minlength="2" maxlength="100" />
+        </div>
+        <div>
+          <label class="block text-sm text-neutral-400 mb-1.5">
+            WhatsApp <span class="text-neutral-600 font-normal">(para avisar a barbearia)</span>
+          </label>
+          <input id="inp-phone" type="tel" placeholder="(88) 99999-0000" autocomplete="tel"
+            class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm"
+            required />
+        </div>
+        <div>
+          <label class="block text-sm text-neutral-400 mb-1.5">
+            Data de nascimento <span class="text-neutral-600 font-normal">(para acessar seus agendamentos depois)</span>
+          </label>
+          <input id="inp-birthdate" type="text" inputmode="numeric" autocomplete="bday"
+            placeholder="dd/mm/aaaa" maxlength="10"
+            class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm tabular-nums"
+            required />
+        </div>
 
-      <button type="submit" id="submit-btn"
-        class="w-full bg-teal hover:bg-teal-hover text-white font-bold tracking-widest uppercase px-8 py-4 rounded-md transition-colors duration-300 mt-2 disabled:opacity-60 disabled:cursor-not-allowed">
-        Confirmar agendamento
-      </button>
-    </form>
+        <p id="form-error" class="hidden text-red-400 text-sm"></p>
 
-    ${backBtn(3, 'Alterar horário')}`;
+        <button type="submit" id="submit-btn"
+          class="w-full bg-teal hover:bg-teal-hover text-white font-bold tracking-widest uppercase px-8 py-4 rounded-md transition-colors duration-300 mt-2 disabled:opacity-60 disabled:cursor-not-allowed">
+          Confirmar agendamento
+        </button>
+      </form>
+
+      ${backBtn(3, 'Alterar horário')}
+    </div>`;
 
   wizard.querySelector('#booking-form')!.addEventListener('submit', handleSubmit);
 
@@ -487,3 +526,19 @@ wizard.addEventListener('click', async (e) => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 initStep1();
 </script>
+
+<style is:global>
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-fade-in {
+    animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+</style>

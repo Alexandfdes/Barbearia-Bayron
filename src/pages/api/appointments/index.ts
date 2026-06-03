@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { addMinutes } from 'date-fns';
 import { json } from '../../../lib/api.js';
 import { bookAppointment } from '../../../lib/bookAppointment.js';
+import { checkRateLimit } from '../../../lib/rateLimit.js';
 
 // Idade mínima 5 anos, máxima 100 anos — só sanidade
 const MIN_BIRTH_AGE_YEARS = 5;
@@ -29,7 +30,22 @@ function isPlausibleBirthdate(iso: string): boolean {
   return d >= minDate && d <= maxDate;
 }
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, clientAddress }) => {
+  // IP do cliente (atrás de nginx, prioriza x-forwarded-for)
+  let ip = 'unknown';
+  try {
+    ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
+      ?? request.headers.get('x-real-ip')
+      ?? clientAddress
+      ?? 'unknown';
+  } catch { /* clientAddress pode lançar em alguns adapters */ }
+
+  // Camada 1: anti-flood por IP (a idempotency key cobre duplo-clique, não abuso)
+  const ipRl = checkRateLimit(`booking-ip:${ip}`, { maxTries: 15 });
+  if (!ipRl.ok) {
+    return json({ error: `Muitas tentativas deste dispositivo. Tente em ${ipRl.retryAfterSecs}s.` }, 429);
+  }
+
   let body: unknown;
   try { body = await request.json(); }
   catch { return json({ error: 'JSON inválido' }, 400); }
@@ -40,6 +56,13 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   const { barberId, serviceId, customerName, customerPhone, customerBirthdate, startsAt: startsAtStr, idempotencyKey } = parsed.data;
+
+  // Camada 2: por telefone (mesmo IP) — barra abuso repetido com um número
+  const phoneKey = customerPhone.replace(/\D/g, '').slice(-11);
+  const phoneRl = checkRateLimit(`booking-phone:${ip}:${phoneKey}`, { maxTries: 5 });
+  if (!phoneRl.ok) {
+    return json({ error: 'Muitos agendamentos para este telefone em pouco tempo. Tente mais tarde.' }, 429);
+  }
 
   if (!isPlausibleBirthdate(customerBirthdate)) {
     return json({ error: 'Data de nascimento inválida' }, 400);

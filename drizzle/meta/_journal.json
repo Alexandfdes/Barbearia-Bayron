@@ -22,6 +22,13 @@
       "when": 1780099999000,
       "tag": "0002_audit_and_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1780199999000,
+      "tag": "0003_add_appointment_items",
+      "breakpoints": true
     }
   ]
 }

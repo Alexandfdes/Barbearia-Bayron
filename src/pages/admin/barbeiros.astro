@@ -1,0 +1,299 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { barbers } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+if (session.role !== 'admin') return Astro.redirect('/admin/servicos');
+
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+
+const list = db
+  .select({ id: barbers.id, name: barbers.name, slug: barbers.slug, role: barbers.role, active: barbers.active })
+  .from(barbers)
+  .orderBy(barbers.name)
+  .all();
+
+const activeCount   = list.filter(b => b.active).length;
+const inactiveCount = list.length - activeCount;
+---
+
+<AdminLayout title="Barbeiros" barberName={barberRow.name} role="admin">
+  <main class="max-w-3xl mx-auto px-4 py-6">
+
+    <div class="flex items-center justify-between mb-6 gap-3">
+      <div>
+        <h1 class="text-lg font-medium text-neutral-100">Barbeiros</h1>
+        <p class="text-sm text-neutral-500 mt-1">{activeCount} ativos · {inactiveCount} inativos</p>
+      </div>
+      <button id="btn-new"
+        class="shrink-0 flex items-center gap-2 text-xs px-4 py-2 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest rounded transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+        </svg>
+        Novo
+      </button>
+    </div>
+
+    <div id="form-new" class="hidden bg-dark-card border border-teal/20 rounded-md p-4 mb-4 space-y-3">
+      <p class="text-sm font-medium text-neutral-200">Novo barbeiro</p>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome</label>
+          <input id="new-name" type="text" placeholder="ex: Carlos Souza"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Slug (login)</label>
+          <input id="new-slug" type="text" placeholder="carlos-souza"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Acesso</label>
+          <select id="new-role"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+            <option value="barber">Barbeiro</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Senha inicial</label>
+          <input id="new-password" type="text" placeholder="mín. 6 caracteres"
+            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+        </div>
+      </div>
+      <p class="text-xs text-neutral-600">O slug é o usuário de login e não poderá ser alterado depois. O barbeiro já nasce com horário padrão (seg–sáb) e oferecendo o catálogo atual.</p>
+      <div id="new-error" class="hidden text-red-400 text-xs"></div>
+      <div class="flex gap-2">
+        <button id="new-submit"
+          class="flex-1 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-2.5 rounded transition-colors text-xs">
+          Criar barbeiro
+        </button>
+        <button id="new-cancel"
+          class="px-4 border border-white/10 text-neutral-400 hover:text-neutral-200 rounded transition-colors text-xs">
+          Cancelar
+        </button>
+      </div>
+    </div>
+
+    <div class="space-y-2" id="barbers-list">
+      {list.map(b => (
+        <div data-barber-row={String(b.id)} class:list={[
+          'bg-dark-card border rounded-md',
+          b.active ? 'border-white/5' : 'border-white/[0.03] opacity-60'
+        ]}>
+          <div data-view={String(b.id)} class="flex items-center gap-3 px-4 py-3">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <p class:list={['text-sm font-medium', b.active ? 'text-neutral-100' : 'text-neutral-500']}>{b.name}</p>
+                <span class:list={[
+                  'text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded-full border',
+                  b.role === 'admin' ? 'bg-teal/15 text-teal-light border-teal/30' : 'text-neutral-400 border-white/10'
+                ]}>{b.role === 'admin' ? 'Admin' : 'Barbeiro'}</span>
+                {b.active
+                  ? <span class="text-[10px] uppercase tracking-widest text-teal-light/70">ativo</span>
+                  : <span class="text-[10px] uppercase tracking-widest text-neutral-600">inativo</span>}
+                {b.id === session.barberId && <span class="text-[10px] uppercase tracking-widest text-neutral-600">· você</span>}
+              </div>
+              <p class="text-xs text-neutral-600 mt-0.5">slug: {b.slug}</p>
+            </div>
+            <button data-edit={String(b.id)}
+              class="text-xs text-neutral-500 hover:text-neutral-300 px-2 py-1 border border-white/10 hover:border-white/20 rounded transition-colors">
+              Editar
+            </button>
+          </div>
+
+          <div data-edit-form={String(b.id)} class="hidden px-4 pb-4 pt-3 space-y-3 border-t border-white/5">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome</label>
+                <input data-edit-name={String(b.id)} type="text" value={b.name}
+                  class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+              </div>
+              <div>
+                <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Slug (fixo)</label>
+                <input type="text" value={b.slug} disabled
+                  class="w-full bg-dark-surface/50 border border-white/5 rounded px-3 py-2 text-sm text-neutral-500 cursor-not-allowed" />
+              </div>
+              <div>
+                <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Acesso</label>
+                <select data-edit-role={String(b.id)} disabled={b.id === session.barberId}
+                  class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <option value="barber" selected={b.role === 'barber'}>Barbeiro</option>
+                  <option value="admin" selected={b.role === 'admin'}>Admin</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Status</label>
+                <select data-edit-active={String(b.id)} disabled={b.id === session.barberId}
+                  class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <option value="true" selected={b.active}>Ativo</option>
+                  <option value="false" selected={!b.active}>Inativo</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nova senha (opcional)</label>
+              <input data-edit-password={String(b.id)} type="text" placeholder="deixe em branco para manter"
+                class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+            </div>
+
+            {b.id === session.barberId && (
+              <p class="text-xs text-neutral-600">Você não pode mudar o próprio acesso nem se desativar.</p>
+            )}
+
+            <div data-edit-error={String(b.id)} class="hidden text-red-400 text-xs"></div>
+            <div class="flex gap-2">
+              <button data-edit-save={String(b.id)}
+                class="flex-1 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-2 rounded transition-colors text-xs">
+                Salvar
+              </button>
+              <button data-edit-close={String(b.id)}
+                class="px-4 border border-white/10 text-neutral-400 hover:text-neutral-200 rounded transition-colors text-xs">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+
+  </main>
+</AdminLayout>
+
+<script>
+  function slugify(str: string): string {
+    return str.toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  // ── Novo barbeiro ─────────────────────────────────────────────────────────────
+  const formNew = document.getElementById('form-new');
+  const newName = document.getElementById('new-name') as HTMLInputElement | null;
+  const newSlug = document.getElementById('new-slug') as HTMLInputElement | null;
+  let slugTouched = false;
+
+  newSlug?.addEventListener('input', () => { slugTouched = true; });
+  newName?.addEventListener('input', () => {
+    if (!slugTouched && newSlug) newSlug.value = slugify(newName.value);
+  });
+
+  document.getElementById('btn-new')?.addEventListener('click', () => formNew?.classList.toggle('hidden'));
+  document.getElementById('new-cancel')?.addEventListener('click', () => formNew?.classList.add('hidden'));
+
+  document.getElementById('new-submit')?.addEventListener('click', async () => {
+    const errorEl = document.getElementById('new-error') as HTMLElement;
+    const btn     = document.getElementById('new-submit') as HTMLButtonElement;
+    const roleEl  = document.getElementById('new-role') as HTMLSelectElement;
+    const passEl  = document.getElementById('new-password') as HTMLInputElement;
+
+    errorEl.classList.add('hidden');
+    const name = newName?.value.trim() ?? '';
+    const slug = slugify(newSlug?.value ?? '') || slugify(name);
+    const role = roleEl.value;
+    const password = passEl.value;
+
+    if (name.length < 2)     { errorEl.textContent = 'Informe o nome (mín. 2 caracteres)'; errorEl.classList.remove('hidden'); return; }
+    if (!slug)               { errorEl.textContent = 'Slug inválido'; errorEl.classList.remove('hidden'); return; }
+    if (password.length < 6) { errorEl.textContent = 'A senha precisa ter ao menos 6 caracteres'; errorEl.classList.remove('hidden'); return; }
+
+    btn.disabled = true; btn.textContent = 'Criando...';
+    try {
+      const res  = await fetch('/api/admin/barbers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, slug, role, password }),
+      });
+      const data = await res.json();
+      if (res.ok) { location.reload(); return; }
+      errorEl.textContent = data.error ?? 'Erro ao criar'; errorEl.classList.remove('hidden');
+    } catch {
+      errorEl.textContent = 'Erro de conexão'; errorEl.classList.remove('hidden');
+    }
+    btn.disabled = false; btn.textContent = 'Criar barbeiro';
+  });
+
+  // ── Editar barbeiro ───────────────────────────────────────────────────────────
+  const listEl = document.getElementById('barbers-list')!;
+
+  listEl.addEventListener('click', async (e) => {
+    const target = e.target as HTMLElement;
+
+    const editBtn = target.closest<HTMLButtonElement>('[data-edit]');
+    if (editBtn) {
+      const id = editBtn.dataset.edit!;
+      document.querySelector(`[data-view="${id}"]`)?.classList.add('hidden');
+      document.querySelector(`[data-edit-form="${id}"]`)?.classList.remove('hidden');
+      return;
+    }
+
+    const closeBtn = target.closest<HTMLButtonElement>('[data-edit-close]');
+    if (closeBtn) {
+      const id = closeBtn.dataset.editClose!;
+      document.querySelector(`[data-edit-form="${id}"]`)?.classList.add('hidden');
+      document.querySelector(`[data-view="${id}"]`)?.classList.remove('hidden');
+      return;
+    }
+
+    const saveBtn = target.closest<HTMLButtonElement>('[data-edit-save]');
+    if (saveBtn) {
+      const id      = saveBtn.dataset.editSave!;
+      const nameEl  = document.querySelector<HTMLInputElement>(`[data-edit-name="${id}"]`)!;
+      const roleEl  = document.querySelector<HTMLSelectElement>(`[data-edit-role="${id}"]`)!;
+      const activeEl= document.querySelector<HTMLSelectElement>(`[data-edit-active="${id}"]`)!;
+      const passEl  = document.querySelector<HTMLInputElement>(`[data-edit-password="${id}"]`)!;
+      const errorEl = document.querySelector<HTMLElement>(`[data-edit-error="${id}"]`)!;
+
+      const name     = nameEl.value.trim();
+      const role     = roleEl.value;
+      const active   = activeEl.value === 'true';
+      const password = passEl.value;
+
+      errorEl.classList.add('hidden');
+      if (name.length < 2) { errorEl.textContent = 'Nome inválido'; errorEl.classList.remove('hidden'); return; }
+      if (password && password.length < 6) { errorEl.textContent = 'A nova senha precisa ter ao menos 6 caracteres'; errorEl.classList.remove('hidden'); return; }
+
+      saveBtn.disabled = true; saveBtn.textContent = '...';
+      try {
+        const res  = await fetch(`/api/admin/barbers/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, role, active }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.error ?? 'Erro ao salvar'; errorEl.classList.remove('hidden');
+          saveBtn.disabled = false; saveBtn.textContent = 'Salvar';
+          return;
+        }
+
+        if (password) {
+          const pres = await fetch(`/api/admin/barbers/${id}/password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+          });
+          if (!pres.ok) {
+            const pd = await pres.json();
+            errorEl.textContent = pd.error ?? 'Dados salvos, mas a senha falhou'; errorEl.classList.remove('hidden');
+            saveBtn.disabled = false; saveBtn.textContent = 'Salvar';
+            return;
+          }
+        }
+        location.reload();
+      } catch {
+        errorEl.textContent = 'Erro de conexão'; errorEl.classList.remove('hidden');
+        saveBtn.disabled = false; saveBtn.textContent = 'Salvar';
+      }
+    }
+  });
+</script>

@@ -6,9 +6,9 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { db } from '../../../../db/index.js';
 import { appointments, barbers, services } from '../../../../db/schema.js';
 import { json } from '../../../../lib/api.js';
+import { WHATSAPP_NUMBER } from '../../../../config';
 
 const TZ = 'America/Fortaleza';
-const WHATSAPP = process.env.WHATSAPP_BARBEARIA ?? '';
 
 export const GET: APIRoute = ({ params }) => {
   const { token } = params;
@@ -47,11 +47,11 @@ export const GET: APIRoute = ({ params }) => {
     const dateLocal = formatInTimeZone(startsAtDate, TZ, 'dd/MM/yyyy');
     const timeLocal = formatInTimeZone(startsAtDate, TZ, 'HH:mm');
 
-    const whatsappText = WHATSAPP
+    const whatsappText = WHATSAPP_NUMBER
       ? `Olá! Agendei *${appt.serviceName}* com *${appt.barberName}* no dia *${dateLocal}* às *${timeLocal}*.`
       : null;
     const whatsappUrl = whatsappText
-      ? `https://wa.me/55${WHATSAPP}?text=${encodeURIComponent(whatsappText)}`
+      ? `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(whatsappText)}`
       : null;
 
     return json({

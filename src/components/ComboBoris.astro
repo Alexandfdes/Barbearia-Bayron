@@ -11,38 +11,38 @@ import comboImg from "../assets/fotos-videos/carrosel7.jpg";
     >
       <div class="grid md:grid-cols-2">
         <!-- Right: Info -->
-        <div class="p-8 md:p-14 flex flex-col justify-center md:order-2">
-          <div class="flex flex-wrap items-center gap-4 mb-2">
+        <div class="p-4 sm:p-8 md:p-14 flex flex-col justify-center md:order-2">
+          <div class="flex flex-wrap items-center gap-4 mb-1">
             <span
-              class="text-teal-light text-xs font-medium tracking-[0.25em] uppercase"
+              class="text-teal-light text-[10px] sm:text-xs font-medium tracking-[0.25em] uppercase"
               >Promoção do Dia</span
             >
           </div>
 
-          <div class="flex flex-wrap items-center gap-4 mb-6">
-            <h2 class="font-serif text-3xl md:text-4xl font-medium text-white">
+          <div class="flex flex-wrap items-center gap-3 mb-4 sm:mb-6">
+            <h2 class="font-serif text-2xl sm:text-3xl md:text-4xl font-medium text-white">
               Combo Boris
             </h2>
             <span
-              class="bg-teal text-white text-xs font-bold px-2.5 py-1 rounded-sm uppercase tracking-wider"
+              class="bg-teal text-white text-[10px] sm:text-xs font-bold px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-sm uppercase tracking-wider"
             >
               10% OFF
             </span>
           </div>
 
-          <p class="text-neutral-300 text-base mb-8 leading-relaxed">
+          <p class="text-neutral-300 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
             Feche Cabelo + Barba e leve qualquer produto da linha Boris com
             desconto no valor total.
           </p>
 
-          <ul class="space-y-3 mb-10">
+          <ul class="space-y-2.5 sm:space-y-3 mb-6 sm:mb-10">
             {
               [
                 "Degradê ou Social na régua",
                 "Barba alinhada na navalha",
                 "Produto Boris à sua escolha",
               ].map((item) => (
-                <li class="flex items-center gap-3 text-neutral-200">
+                <li class="flex items-center gap-3 text-neutral-200 text-xs sm:text-sm md:text-base">
                   <svg
                     class="w-4 h-4 text-teal-light shrink-0"
                     fill="none"
@@ -66,7 +66,7 @@ import comboImg from "../assets/fotos-videos/carrosel7.jpg";
           <a
             href={TOPSALAO_URL}
             id="combo-boris-cta"
-            class="inline-flex items-center justify-center gap-3 bg-[#0f766e] hover:bg-[#0d9488] text-white font-bold text-sm uppercase tracking-widest px-10 py-4 rounded-sm transition-colors duration-300 w-full sm:w-auto"
+            class="inline-flex items-center justify-center gap-3 bg-[#0f766e] hover:bg-[#0d9488] text-white font-bold text-xs sm:text-sm uppercase tracking-widest px-5 py-3 sm:px-10 sm:py-4 rounded-sm transition-colors duration-300 w-full max-w-[280px] sm:w-auto"
           >
             Agendar Combo
             <svg

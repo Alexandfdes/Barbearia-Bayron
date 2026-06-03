@@ -77,3 +77,17 @@ export const appointments = sqliteTable('appointments', {
   index('appt_barber_date_idx').on(table.barberId, table.startsAt),
   index('appt_phone_idx').on(table.customerPhone),
 ]);
+
+// Itens extras cobrados no fechamento do atendimento (a "comanda"): o que o
+// cliente consumiu além do serviço agendado — ex.: agendou corte, fez barba também.
+// priceCents e name são snapshot no momento do fechamento.
+export const appointmentItems = sqliteTable('appointment_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  appointmentId: integer('appointment_id').notNull().references(() => appointments.id),
+  serviceId: integer('service_id').references(() => services.id), // null = item avulso
+  name: text('name').notNull(),
+  priceCents: integer('price_cents').notNull(),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('appt_items_appt_idx').on(table.appointmentId),
+]);

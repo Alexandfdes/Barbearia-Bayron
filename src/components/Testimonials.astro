@@ -63,29 +63,29 @@ const ldJson = {
     </div>
 
     <!-- Grade de cards -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div class="grid grid-cols-1 min-[500px]:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
       {depoimentos.map((d) => (
-        <article class="bg-dark-card border border-white/5 hover:border-teal/20 rounded-md p-6 flex flex-col gap-4 transition-colors duration-300">
+        <article class="bg-dark-card border border-white/5 hover:border-teal/20 rounded-md p-4 sm:p-5 md:p-6 flex flex-col gap-3 sm:gap-4 transition-colors duration-300">
           <div class="flex gap-1" aria-label={`${d.rating} de 5 estrelas`}>
             {Array.from({ length: d.rating }).map(() => (
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+              <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                 <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
               </svg>
             ))}
           </div>
-          <blockquote class="text-sm text-neutral-300 leading-relaxed flex-1">
+          <blockquote class="text-[13px] sm:text-sm text-neutral-300 leading-relaxed flex-1">
             &ldquo;{d.text}&rdquo;
           </blockquote>
-          <footer class="flex items-center gap-3 pt-1">
+          <footer class="flex items-center gap-2.5 sm:gap-3 pt-1">
             <div
-              class="w-9 h-9 rounded-full bg-teal/20 flex items-center justify-center text-teal-light font-semibold text-sm shrink-0"
+              class="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-teal/20 flex items-center justify-center text-teal-light font-semibold text-xs sm:text-sm shrink-0"
               aria-hidden="true"
             >
               {d.initial}
             </div>
             <div>
-              <cite class="text-sm font-medium text-neutral-200 not-italic block">{d.name}</cite>
-              <span class="text-xs text-neutral-500">{d.date}</span>
+              <cite class="text-xs sm:text-sm font-medium text-neutral-200 not-italic block">{d.name}</cite>
+              <span class="text-[10px] sm:text-xs text-neutral-500">{d.date}</span>
             </div>
           </footer>
         </article>

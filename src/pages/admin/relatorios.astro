@@ -1,0 +1,265 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { appointments, appointmentItems, barbers, services } from '../../db/schema.js';
+import { and, gte, lt, eq } from 'drizzle-orm';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+
+const TZ = 'America/Fortaleza';
+const START_HOUR = 8;
+const END_HOUR = 19;
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+if (session.role !== 'admin') return Astro.redirect('/admin/servicos');
+
+const barberRow = db.select({ id: barbers.id, name: barbers.name })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+
+const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+// Mês selecionado (YYYY-MM). Default: mês atual no fuso local.
+const nowUtc = new Date();
+const thisMonth = formatInTimeZone(nowUtc, TZ, 'yyyy-MM');
+const mesParam = Astro.url.searchParams.get('mes');
+const mes = mesParam && /^\d{4}-\d{2}$/.test(mesParam) ? mesParam : thisMonth;
+const [yy, mm] = mes.split('-').map(Number);
+
+function shiftMonth(y: number, m: number, delta: number): string {
+  let nm = m + delta, ny = y;
+  if (nm < 1)  { nm = 12; ny--; }
+  if (nm > 12) { nm = 1;  ny++; }
+  return `${ny}-${String(nm).padStart(2, '0')}`;
+}
+const prevMes = shiftMonth(yy, mm, -1);
+const nextMes = shiftMonth(yy, mm, 1);
+const nextMesLabel = (() => { const [a, b] = nextMes.split('-').map(Number); return `${MESES[b - 1]} ${a}`; })();
+const isCurrentOrFuture = mes >= thisMonth;
+
+// Janela do mês em UTC (00:00 local do 1º dia até 00:00 local do mês seguinte)
+const startUtc = fromZonedTime(`${mes}-01T00:00:00`, TZ).toISOString();
+const endUtc   = fromZonedTime(`${shiftMonth(yy, mm, 1)}-01T00:00:00`, TZ).toISOString();
+
+const rows = db
+  .select({
+    status:     appointments.status,
+    startsAt:   appointments.startsAt,
+    endsAt:     appointments.endsAt,
+    priceCents: appointments.priceCents,
+    barberName: barbers.name,
+    serviceName: services.name,
+  })
+  .from(appointments)
+  .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
+  .innerJoin(services, eq(services.id, appointments.serviceId))
+  .where(and(gte(appointments.startsAt, startUtc), lt(appointments.startsAt, endUtc)))
+  .all();
+
+// ── Agregação (em JS, com fuso correto para os horários) ──────────────────────
+let realizadoCents = 0, previstoCents = 0, abertoCents = 0, perdidoCents = 0;
+let completedCount = 0, noShowCount = 0, abertoCount = 0;
+
+const porBarbeiro = new Map<string, number>();
+const porServico  = new Map<string, { count: number; cents: number }>();
+const porHora: number[] = new Array(END_HOUR - START_HOUR + 1).fill(0);
+
+function bumpHora(startsAt: string) {
+  const h = Number(formatInTimeZone(new Date(startsAt), TZ, 'H'));
+  if (h >= START_HOUR && h <= END_HOUR) porHora[h - START_HOUR]++;
+}
+
+for (const r of rows) {
+  if (r.status === 'completed') {
+    realizadoCents += r.priceCents;
+    completedCount++;
+    porBarbeiro.set(r.barberName, (porBarbeiro.get(r.barberName) ?? 0) + r.priceCents);
+    const s = porServico.get(r.serviceName) ?? { count: 0, cents: 0 };
+    s.count++; s.cents += r.priceCents;
+    porServico.set(r.serviceName, s);
+    bumpHora(r.startsAt);
+  } else if (r.status === 'confirmed') {
+    if (new Date(r.endsAt) > nowUtc) {
+      previstoCents += r.priceCents;   // ainda vai acontecer
+    } else {
+      abertoCents += r.priceCents;     // passou e ninguém fechou
+      abertoCount++;
+    }
+    bumpHora(r.startsAt);              // ocupa a cadeira de qualquer forma
+  } else if (r.status === 'no_show') {
+    perdidoCents += r.priceCents;
+    noShowCount++;
+  }
+  // 'cancelled' não entra em receita nem em no-show
+}
+
+// Extras da comanda (itens cobrados além do serviço agendado), só de concluídos
+const itemRows = db
+  .select({ name: appointmentItems.name, priceCents: appointmentItems.priceCents, barberName: barbers.name })
+  .from(appointmentItems)
+  .innerJoin(appointments, eq(appointments.id, appointmentItems.appointmentId))
+  .innerJoin(barbers, eq(barbers.id, appointments.barberId))
+  .where(and(
+    gte(appointments.startsAt, startUtc),
+    lt(appointments.startsAt, endUtc),
+    eq(appointments.status, 'completed'),
+  ))
+  .all();
+
+for (const it of itemRows) {
+  realizadoCents += it.priceCents;
+  porBarbeiro.set(it.barberName, (porBarbeiro.get(it.barberName) ?? 0) + it.priceCents);
+  const s = porServico.get(it.name) ?? { count: 0, cents: 0 };
+  s.count++; s.cents += it.priceCents;
+  porServico.set(it.name, s);
+}
+
+const brl = (cents: number) => 'R$ ' + Math.round(cents / 100).toLocaleString('pt-BR');
+const ticketCents = completedCount ? Math.round(realizadoCents / completedCount) : 0;
+const fechados = completedCount + noShowCount;
+const noShowRate = fechados ? Math.round((noShowCount / fechados) * 1000) / 10 : 0;
+
+const maxHora = Math.max(1, ...porHora);
+const horas = porHora.map((count, i) => ({ hora: START_HOUR + i, count, pct: Math.round((count / maxHora) * 100) }));
+
+const barbeirosRank = [...porBarbeiro.entries()]
+  .map(([name, cents]) => ({ name, cents }))
+  .sort((a, b) => b.cents - a.cents);
+const maxBarbeiro = Math.max(1, ...barbeirosRank.map(b => b.cents));
+
+const servicosRank = [...porServico.entries()]
+  .map(([name, v]) => ({ name, count: v.count, cents: v.cents }))
+  .sort((a, b) => b.cents - a.cents)
+  .slice(0, 6);
+
+const temDados = rows.length > 0;
+---
+
+<AdminLayout title="Relatórios" barberName={barberRow.name} role="admin">
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+
+    <div class="flex items-center justify-between gap-3">
+      <div>
+        <h1 class="text-lg font-medium text-neutral-100">Painel</h1>
+        <p class="text-sm text-neutral-500 mt-1">{MESES[mm - 1]} de {yy}</p>
+      </div>
+      <div class="flex items-center gap-1">
+        <a href={`/admin/relatorios?mes=${prevMes}`}
+          class="w-8 h-8 flex items-center justify-center border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light rounded transition-colors"
+          aria-label="Mês anterior">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+        </a>
+        {!isCurrentOrFuture && (
+          <a href={`/admin/relatorios?mes=${nextMes}`}
+            class="w-8 h-8 flex items-center justify-center border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light rounded transition-colors"
+            aria-label={`Ir para ${nextMesLabel}`}>
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+          </a>
+        )}
+      </div>
+    </div>
+
+    {abertoCount > 0 && (
+      <div class="bg-amber-950/20 border border-amber-500/25 rounded-lg p-4 flex items-start gap-3">
+        <svg class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.008M10.34 3.94l-8.4 14.55A1.5 1.5 0 003.24 21h17.52a1.5 1.5 0 001.3-2.51l-8.4-14.55a1.5 1.5 0 00-2.6 0z"/>
+        </svg>
+        <div>
+          <p class="text-sm text-amber-200 font-medium">{abertoCount} {abertoCount === 1 ? 'atendimento passou' : 'atendimentos passaram'} sem ser fechado ({brl(abertoCents)} em aberto)</p>
+          <p class="text-xs text-amber-200/60 mt-0.5">Marque cada um como concluído ou no-show na agenda do dia para a receita e a taxa de falta ficarem corretas.</p>
+        </div>
+      </div>
+    )}
+
+    <section class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div class="bg-dark-card border border-teal/20 rounded-lg p-4">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Receita realizada</p>
+        <p class="text-2xl font-bold text-teal-light mt-1 tabular-nums">{brl(realizadoCents)}</p>
+        <p class="text-xs text-neutral-600 mt-0.5">{completedCount} {completedCount === 1 ? 'atendimento' : 'atendimentos'}</p>
+      </div>
+      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Previsto</p>
+        <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{brl(previstoCents)}</p>
+        <p class="text-xs text-neutral-600 mt-0.5">confirmados que faltam</p>
+      </div>
+      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Ticket médio</p>
+        <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{brl(ticketCents)}</p>
+        <p class="text-xs text-neutral-600 mt-0.5">por atendimento</p>
+      </div>
+      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">No-show</p>
+        <p class="text-2xl font-bold text-red-400 mt-1 tabular-nums">{noShowRate}%</p>
+        <p class="text-xs text-neutral-600 mt-0.5">{noShowCount} {noShowCount === 1 ? 'falta' : 'faltas'}</p>
+      </div>
+      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Receita perdida</p>
+        <p class="text-2xl font-bold text-red-400 mt-1 tabular-nums">{brl(perdidoCents)}</p>
+        <p class="text-xs text-neutral-600 mt-0.5">com faltas</p>
+      </div>
+      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Atendimentos</p>
+        <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{completedCount}</p>
+        <p class="text-xs text-neutral-600 mt-0.5">concluídos no mês</p>
+      </div>
+    </section>
+
+    {!temDados && (
+      <div class="bg-dark-card border border-white/5 rounded-lg py-12 text-center">
+        <p class="text-sm text-neutral-500">Nenhum agendamento neste mês.</p>
+      </div>
+    )}
+
+    {temDados && (
+      <section class="bg-dark-card border border-white/5 rounded-lg p-5">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Movimento por horário</p>
+        <div class="flex items-end gap-1.5" style="height: 120px;">
+          {horas.map(h => (
+            <div class="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+              <span class="text-[10px] text-neutral-600 tabular-nums">{h.count > 0 ? h.count : ''}</span>
+              <div class="w-full bg-teal/70 rounded-t-sm" style={`height: ${h.pct}%`} title={`${h.hora}:00 — ${h.count} agendamentos`}></div>
+              <span class="text-[10px] text-neutral-600 tabular-nums">{h.hora}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
+
+    {barbeirosRank.length > 0 && (
+      <section class="bg-dark-card border border-white/5 rounded-lg p-5">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Receita por barbeiro</p>
+        <div class="space-y-3">
+          {barbeirosRank.map(b => (
+            <div class="flex items-center gap-3">
+              <span class="text-sm text-neutral-300 w-24 shrink-0 truncate">{b.name.split(' ')[0]}</span>
+              <div class="flex-1 h-2.5 bg-dark-surface rounded-full overflow-hidden">
+                <div class="h-full bg-teal" style={`width: ${Math.round((b.cents / maxBarbeiro) * 100)}%`}></div>
+              </div>
+              <span class="text-sm font-medium text-neutral-200 tabular-nums w-20 text-right">{brl(b.cents)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
+
+    {servicosRank.length > 0 && (
+      <section class="bg-dark-card border border-white/5 rounded-lg p-5">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Serviços que mais faturam</p>
+        <div class="space-y-2.5">
+          {servicosRank.map((s, i) => (
+            <div class="flex items-baseline gap-3">
+              <span class="text-xs text-neutral-600 tabular-nums w-4">{i + 1}</span>
+              <span class="text-sm text-neutral-300 flex-1 min-w-0 truncate">{s.name}</span>
+              <span class="text-xs text-neutral-600 tabular-nums">{s.count}x</span>
+              <span class="text-sm font-medium text-teal-light tabular-nums w-20 text-right">{brl(s.cents)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
+
+  </main>
+</AdminLayout>

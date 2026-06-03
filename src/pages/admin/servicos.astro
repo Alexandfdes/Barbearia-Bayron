@@ -14,94 +14,208 @@ const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.
   .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
 if (!barberRow) return Astro.redirect('/admin/login');
 
-// All active services with this barber's settings
-const rows = db
+const isAdmin = session.role === 'admin';
+
+// Serviços do catálogo + a configuração deste barbeiro (toggle + duração).
+// Admin vê também os inativos (para reativar); barbeiro vê só os ativos.
+const baseSelect = db
   .select({
-    id:         services.id,
-    name:       services.name,
-    priceCents: services.priceCents,
-    bsActive:   barberServices.active,
-    bsDuration: barberServices.durationMinutes,
+    id:           services.id,
+    name:         services.name,
+    priceCents:   services.priceCents,
+    globalActive: services.active,
+    bsActive:     barberServices.active,
+    bsDuration:   barberServices.durationMinutes,
   })
   .from(services)
   .leftJoin(barberServices, and(
     eq(barberServices.serviceId, services.id),
     eq(barberServices.barberId,  session.barberId),
-  ))
-  .where(eq(services.active, true))
-  .orderBy(services.name)
-  .all();
+  ));
+
+const rows = isAdmin
+  ? baseSelect.orderBy(services.name).all()
+  : baseSelect.where(eq(services.active, true)).orderBy(services.name).all();
 
 const svcList = rows.map(r => ({
-  id:       r.id,
-  name:     r.name,
-  price:    `R$ ${(r.priceCents / 100).toFixed(0)}`,
-  active:   r.bsActive ?? false,
-  duration: r.bsDuration ?? 30,
+  id:           r.id,
+  name:         r.name,
+  priceNum:     Math.floor(r.priceCents / 100),
+  price:        `R$ ${(r.priceCents / 100).toFixed(0)}`,
+  globalActive: r.globalActive,
+  active:       r.bsActive ?? false,
+  duration:     r.bsDuration ?? 30,
 }));
+
+const activeCount   = svcList.filter(s => s.globalActive).length;
+const inactiveCount = svcList.length - activeCount;
 ---
 
-<AdminLayout title="Meus Serviços" barberName={barberRow.name} role={session.role}>
+<AdminLayout title="Serviços" barberName={barberRow.name} role={session.role}>
   <main class="max-w-3xl mx-auto px-4 py-6">
 
-    <div class="mb-6">
-      <h1 class="text-lg font-medium text-neutral-100">Meus Serviços</h1>
-      <p class="text-sm text-neutral-500 mt-1">Configure quais serviços você oferece e a duração de cada um.</p>
+    <div class="flex items-center justify-between mb-6 gap-3">
+      <div>
+        <h1 class="text-lg font-medium text-neutral-100">{isAdmin ? 'Serviços' : 'Meus Serviços'}</h1>
+        <p class="text-sm text-neutral-500 mt-1">
+          {isAdmin
+            ? `Configure o que você oferece. Como admin, também gerencia o catálogo (${activeCount} ativos · ${inactiveCount} inativos).`
+            : 'Configure quais serviços você oferece e a duração de cada um.'}
+        </p>
+      </div>
+
+      {isAdmin && (
+        <button id="btn-new-svc"
+          class="shrink-0 flex items-center gap-2 text-xs px-4 py-2 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest rounded transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+          </svg>
+          Novo
+        </button>
+      )}
     </div>
+
+    {isAdmin && (
+      <div id="form-new" class="hidden bg-dark-card border border-teal/20 rounded-md p-4 mb-4 space-y-3">
+        <p class="text-sm font-medium text-neutral-200">Novo serviço</p>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome</label>
+            <input id="new-name" type="text" placeholder="ex: Progressiva"
+              class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Preço (R$)</label>
+            <input id="new-price" type="number" min="0" step="1" placeholder="0"
+              class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50" />
+          </div>
+        </div>
+        <div id="new-error" class="hidden text-red-400 text-xs"></div>
+        <div class="flex gap-2">
+          <button id="new-submit"
+            class="flex-1 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-2.5 rounded transition-colors text-xs">
+            Criar serviço
+          </button>
+          <button id="new-cancel"
+            class="px-4 border border-white/10 text-neutral-400 hover:text-neutral-200 rounded transition-colors text-xs">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    )}
 
     <div class="space-y-2" id="services-list">
       {svcList.map(svc => (
-        <div data-svc-id={String(svc.id)} class="bg-dark-card border border-white/5 rounded-md px-4 py-3">
-          <div class="flex items-center gap-3 flex-wrap">
+        <div data-svc-id={String(svc.id)} class:list={[
+          'bg-dark-card border rounded-md',
+          svc.globalActive ? 'border-white/5' : 'border-white/[0.03] opacity-60'
+        ]}>
 
-            <!-- Toggle -->
-            <button
-              data-toggle={String(svc.id)}
-              data-active={String(svc.active)}
-              class:list={[
-                'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors',
-                svc.active ? 'bg-teal' : 'bg-neutral-700'
-              ]}
-              aria-label="Toggle serviço"
-            >
-              <span class:list={[
-                'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform',
-                svc.active ? 'translate-x-5' : 'translate-x-0.5'
-              ]} />
-            </button>
+          {svc.globalActive ? (
+            <div class="flex items-center gap-3 flex-wrap px-4 py-3">
 
-            <!-- Name and price -->
-            <div class="flex-1 min-w-0">
-              <p class:list={['text-sm font-medium', svc.active ? 'text-neutral-100' : 'text-neutral-500']}>
-                {svc.name}
-              </p>
-              <p class="text-xs text-neutral-600">{svc.price}</p>
+              <button
+                data-toggle={String(svc.id)}
+                data-active={String(svc.active)}
+                class:list={[
+                  'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors',
+                  svc.active ? 'bg-teal' : 'bg-neutral-700'
+                ]}
+                aria-label="Toggle serviço"
+              >
+                <span class:list={[
+                  'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform',
+                  svc.active ? 'translate-x-5' : 'translate-x-0.5'
+                ]} />
+              </button>
+
+              <div class="flex-1 min-w-0">
+                <p class:list={['text-sm font-medium', svc.active ? 'text-neutral-100' : 'text-neutral-500']}>
+                  {svc.name}
+                </p>
+                <p class="text-xs text-neutral-600">{svc.price}</p>
+              </div>
+
+              <div class:list={['flex items-center gap-1.5 transition-opacity', !svc.active && 'opacity-30']}>
+                <input
+                  data-duration={String(svc.id)}
+                  type="number"
+                  min="5" max="480" step="5"
+                  value={svc.duration}
+                  disabled={!svc.active}
+                  class="w-16 bg-dark-surface border border-white/10 rounded px-2 py-1 text-xs text-neutral-200 text-center focus:outline-none focus:border-teal/50 disabled:cursor-not-allowed"
+                />
+                <span class="text-xs text-neutral-600">min</span>
+              </div>
+
+              <button
+                data-save={String(svc.id)}
+                class="text-xs px-3 py-1.5 border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light rounded transition-colors"
+              >
+                Salvar
+              </button>
+
+              <span data-feedback={String(svc.id)} class="text-xs text-neutral-600 hidden"></span>
             </div>
-
-            <!-- Duration input -->
-            <div class:list={['flex items-center gap-1.5 transition-opacity', !svc.active && 'opacity-30']}>
-              <input
-                data-duration={String(svc.id)}
-                type="number"
-                min="5" max="480" step="5"
-                value={svc.duration}
-                disabled={!svc.active}
-                class="w-16 bg-dark-surface border border-white/10 rounded px-2 py-1 text-xs text-neutral-200 text-center focus:outline-none focus:border-teal/50 disabled:cursor-not-allowed"
-              />
-              <span class="text-xs text-neutral-600">min</span>
+          ) : (
+            <div class="flex items-center gap-3 px-4 py-3">
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-neutral-500">{svc.name}</p>
+                <p class="text-xs text-neutral-600">
+                  {svc.price}<span class="ml-2 text-neutral-700">· inativo no catálogo</span>
+                </p>
+              </div>
             </div>
+          )}
 
-            <!-- Save button -->
-            <button
-              data-save={String(svc.id)}
-              class="text-xs px-3 py-1.5 border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light rounded transition-colors"
-            >
-              Salvar
-            </button>
+          {isAdmin && (
+            <div class="flex items-center justify-between gap-2 px-4 py-2 border-t border-white/5">
+              <span class="text-[11px] uppercase tracking-widest text-neutral-600">Catálogo</span>
+              <div class="flex items-center gap-2 shrink-0">
+                <button data-edit={String(svc.id)}
+                  class="text-xs text-neutral-500 hover:text-neutral-300 px-2 py-1 border border-white/10 hover:border-white/20 rounded transition-colors">
+                  Editar
+                </button>
+                <button data-toggle-active={String(svc.id)} data-current-active={String(svc.globalActive)}
+                  class:list={[
+                    'text-xs px-2 py-1 border rounded transition-colors',
+                    svc.globalActive
+                      ? 'border-red-500/20 text-red-400/70 hover:border-red-500/40 hover:text-red-400'
+                      : 'border-teal/20 text-teal-light/70 hover:border-teal/40 hover:text-teal-light'
+                  ]}>
+                  {svc.globalActive ? 'Desativar' : 'Ativar'}
+                </button>
+              </div>
+            </div>
+          )}
 
-            <!-- Status feedback -->
-            <span data-feedback={String(svc.id)} class="text-xs text-neutral-600 hidden"></span>
-          </div>
+          {isAdmin && (
+            <div data-edit-form={String(svc.id)} class="hidden px-4 pb-4 pt-3 space-y-3 border-t border-white/5">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome</label>
+                  <input data-edit-name={String(svc.id)} type="text" value={svc.name}
+                    class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+                </div>
+                <div>
+                  <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Preço (R$)</label>
+                  <input data-edit-price={String(svc.id)} type="number" min="0" step="1"
+                    value={svc.priceNum}
+                    class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button data-edit-save={String(svc.id)}
+                  class="flex-1 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-2 rounded transition-colors text-xs">
+                  Salvar
+                </button>
+                <button data-edit-close={String(svc.id)}
+                  class="px-4 border border-white/10 text-neutral-400 hover:text-neutral-200 rounded transition-colors text-xs">
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -110,13 +224,14 @@ const svcList = rows.map(r => ({
 </AdminLayout>
 
 <script>
+  // ── Configuração do barbeiro (toggle "eu ofereço" + duração) ────────────────
   const list = document.getElementById('services-list')!;
 
   async function saveService(id: string) {
-    const toggleBtn = document.querySelector<HTMLButtonElement>(`[data-toggle="${id}"]`);
+    const toggleBtn  = document.querySelector<HTMLButtonElement>(`[data-toggle="${id}"]`);
     const durationEl = document.querySelector<HTMLInputElement>(`[data-duration="${id}"]`);
     const feedbackEl = document.querySelector<HTMLSpanElement>(`[data-feedback="${id}"]`);
-    const saveBtn   = document.querySelector<HTMLButtonElement>(`[data-save="${id}"]`);
+    const saveBtn    = document.querySelector<HTMLButtonElement>(`[data-save="${id}"]`);
 
     if (!toggleBtn || !feedbackEl) return;
 
@@ -145,13 +260,13 @@ const svcList = rows.map(r => ({
     if (saveBtn) { saveBtn.textContent = 'Salvar'; saveBtn.disabled = false; }
   }
 
-  list.addEventListener('click', (e) => {
+  list.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
 
-    // Toggle active state
+    // Toggle "eu ofereço"
     const toggleBtn = target.closest<HTMLButtonElement>('[data-toggle]');
     if (toggleBtn) {
-      const id       = toggleBtn.dataset.toggle!;
+      const id        = toggleBtn.dataset.toggle!;
       const wasActive = toggleBtn.dataset.active === 'true';
       const nowActive = !wasActive;
 
@@ -163,7 +278,7 @@ const svcList = rows.map(r => ({
       thumb?.classList.toggle('translate-x-5',   nowActive);
       thumb?.classList.toggle('translate-x-0.5', !nowActive);
 
-      const durationEl = document.querySelector<HTMLInputElement>(`[data-duration="${id}"]`);
+      const durationEl   = document.querySelector<HTMLInputElement>(`[data-duration="${id}"]`);
       const durationWrap = durationEl?.parentElement;
       if (durationEl) durationEl.disabled = !nowActive;
       durationWrap?.classList.toggle('opacity-30', !nowActive);
@@ -171,10 +286,101 @@ const svcList = rows.map(r => ({
       const nameEl = document.querySelector(`[data-svc-id="${id}"] .flex-1 p`);
       nameEl?.classList.toggle('text-neutral-100', nowActive);
       nameEl?.classList.toggle('text-neutral-500', !nowActive);
+      return;
     }
 
-    // Save
+    // Salvar config do barbeiro
     const saveBtn = target.closest<HTMLButtonElement>('[data-save]');
-    if (saveBtn) saveService(saveBtn.dataset.save!);
+    if (saveBtn) { saveService(saveBtn.dataset.save!); return; }
+
+    // ── Ações de catálogo (somente admin) ─────────────────────────────────────
+
+    // Abrir form de edição
+    const editBtn = target.closest<HTMLButtonElement>('[data-edit]');
+    if (editBtn) {
+      const id = editBtn.dataset.edit!;
+      document.querySelector(`[data-edit-form="${id}"]`)?.classList.remove('hidden');
+      return;
+    }
+
+    // Fechar form de edição
+    const closeBtn = target.closest<HTMLButtonElement>('[data-edit-close]');
+    if (closeBtn) {
+      const id = closeBtn.dataset.editClose!;
+      document.querySelector(`[data-edit-form="${id}"]`)?.classList.add('hidden');
+      return;
+    }
+
+    // Salvar edição (nome/preço no catálogo global)
+    const editSaveBtn = target.closest<HTMLButtonElement>('[data-edit-save]');
+    if (editSaveBtn) {
+      const id      = editSaveBtn.dataset.editSave!;
+      const nameEl  = document.querySelector<HTMLInputElement>(`[data-edit-name="${id}"]`)!;
+      const priceEl = document.querySelector<HTMLInputElement>(`[data-edit-price="${id}"]`)!;
+
+      editSaveBtn.disabled = true; editSaveBtn.textContent = '...';
+
+      const res = await fetch(`/api/admin/services/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nameEl.value.trim(), priceCents: parseInt(priceEl.value, 10) * 100 }),
+      });
+
+      if (res.ok) { location.reload(); }
+      else { editSaveBtn.disabled = false; editSaveBtn.textContent = 'Salvar'; alert('Erro ao salvar'); }
+      return;
+    }
+
+    // Ativar / Desativar no catálogo global (afeta toda a barbearia)
+    const toggleActiveBtn = target.closest<HTMLButtonElement>('[data-toggle-active]');
+    if (toggleActiveBtn) {
+      const id       = toggleActiveBtn.dataset.toggleActive!;
+      const isActive = toggleActiveBtn.dataset.currentActive === 'true';
+
+      if (isActive && !confirm('Desativar este serviço para TODA a barbearia? Ele deixará de aparecer no site e no agendamento de todos os barbeiros.')) {
+        return;
+      }
+
+      toggleActiveBtn.disabled = true;
+
+      const res = isActive
+        ? await fetch(`/api/admin/services/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } })
+        : await fetch(`/api/admin/services/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: true }) });
+
+      if (res.ok) { location.reload(); }
+      else { toggleActiveBtn.disabled = false; alert('Erro'); }
+      return;
+    }
+  });
+
+  // ── Novo serviço (admin) ────────────────────────────────────────────────────
+  const formNew = document.getElementById('form-new');
+  document.getElementById('btn-new-svc')?.addEventListener('click', () => formNew?.classList.toggle('hidden'));
+  document.getElementById('new-cancel')?.addEventListener('click', () => formNew?.classList.add('hidden'));
+
+  document.getElementById('new-submit')?.addEventListener('click', async () => {
+    const nameEl  = document.getElementById('new-name')  as HTMLInputElement;
+    const priceEl = document.getElementById('new-price') as HTMLInputElement;
+    const errorEl = document.getElementById('new-error') as HTMLElement;
+    const btn     = document.getElementById('new-submit') as HTMLButtonElement;
+
+    errorEl.classList.add('hidden');
+    const name  = nameEl.value.trim();
+    const price = parseInt(priceEl.value, 10);
+
+    if (!name)                      { errorEl.textContent = 'Informe o nome';   errorEl.classList.remove('hidden'); return; }
+    if (isNaN(price) || price <= 0) { errorEl.textContent = 'Preço inválido';   errorEl.classList.remove('hidden'); return; }
+
+    btn.disabled = true; btn.textContent = 'Criando...';
+
+    const res  = await fetch('/api/admin/services', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, priceCents: price * 100 }),
+    });
+    const data = await res.json();
+
+    if (res.ok) { location.reload(); }
+    else { errorEl.textContent = data.error ?? 'Erro'; errorEl.classList.remove('hidden'); btn.disabled = false; btn.textContent = 'Criar serviço'; }
   });
 </script>

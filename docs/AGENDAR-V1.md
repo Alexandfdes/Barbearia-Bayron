@@ -97,6 +97,7 @@ Seed inicial: todos os 3 barbeiros × 20 serviços com as durações padrão (ve
 
 Expediente semanal recorrente.
 
+
 | coluna | tipo | obs |
 |---|---|---|
 | id | integer pk autoincrement | |

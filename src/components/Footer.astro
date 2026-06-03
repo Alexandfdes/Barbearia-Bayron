@@ -1,49 +1,234 @@
 ---
-import { INSTAGRAM_URL } from '../config';
+import { INSTAGRAM_URL, BUSINESS_HOURS, ADDRESS, GOOGLE_MAPS_URL, getWhatsAppUrl } from '../config';
 import { Image } from 'astro:assets';
 import logoSrc from '../assets/Logo-Bayron3.png';
 const currentYear = new Date().getFullYear();
+const whatsappUrl = getWhatsAppUrl('Olá! Vim pelo site e gostaria de agendar um horário.');
 ---
 
-<footer id="contato" class="border-t border-white/5 bg-dark-alt">
-  <div class="max-w-6xl mx-auto px-4 py-16">
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-10">
+<footer id="contato" class="bg-dark relative overflow-hidden">
+  <!-- Linha divisória com gradiente premium no topo -->
+  <div class="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+  
+  <!-- Glows de fundo ricos e sobrepostos para profundidade visual -->
+  <div class="absolute -bottom-20 left-1/4 w-[350px] h-[200px] bg-forest-glow/20 rounded-full blur-[100px] pointer-events-none"></div>
+  <div class="absolute bottom-0 right-1/4 w-[250px] h-[150px] bg-teal/10 rounded-full blur-[80px] pointer-events-none"></div>
 
-      <!-- Brand -->
-      <div>
-        <div class="flex items-center gap-3 mb-4">
-          <Image
-            src={logoSrc}
-            alt="Barbearia Bayron"
-            width={64}
-            class="w-8 h-8 rounded-sm object-contain"
-          />
-          <span class="text-base font-semibold tracking-[0.2em] text-white uppercase">Bayron</span>
+  <div class="max-w-6xl mx-auto px-4 pt-20 pb-12 relative z-10">
+    <!-- Grid principal: 4 colunas a partir de 850px, 2 colunas no tablet, 1 no mobile -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-10 lg:gap-8 items-start">
+
+      <!-- Coluna 1: Brand / Sobre -->
+      <div class="space-y-6 flex flex-col items-start text-left">
+        <div class="flex items-center gap-3.5 group cursor-default">
+          <div class="relative overflow-hidden rounded-md p-1 bg-white/[0.02] border border-white/5 group-hover:border-teal/30 transition-colors duration-500">
+            <Image
+              src={logoSrc}
+              alt="Barbearia Bayron"
+              width={80}
+              class="w-8 h-8 object-contain transition-all duration-700 group-hover:scale-110 group-hover:rotate-3 filter drop-shadow-[0_0_8px_rgba(15,118,110,0.4)]"
+            />
+          </div>
+          <div class="flex flex-col text-left">
+            <span class="text-base font-serif font-medium tracking-[0.25em] text-cream uppercase transition-colors duration-300 group-hover:text-white">Bayron</span>
+            <span class="text-[8px] tracking-[0.3em] text-neutral-500 uppercase font-sans">Premium Barber</span>
+          </div>
         </div>
-        <p class="text-sm text-neutral-400 leading-relaxed mb-5">
-          Respeito e precisão em cada corte. A barbearia masculina premium de Mossoró.
+        
+        <p class="text-xs text-neutral-400 leading-relaxed max-w-xs">
+          Liderança e excelência em serviços de barbearia masculina, com compromisso e qualidade certificada para homens de bom gosto em Mossoró.
         </p>
-        <a href={INSTAGRAM_URL} target="_blank" rel="noopener" class="inline-flex items-center gap-2 text-sm font-medium text-teal-light hover:text-white transition-colors duration-300">
-          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+
+        <!-- Botão Instagram Premium -->
+        <a
+          href={INSTAGRAM_URL}
+          target="_blank"
+          rel="noopener"
+          class="inline-flex items-center gap-2.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-300 hover:text-white bg-white/[0.02] hover:bg-white/[0.06] border border-white/10 hover:border-teal/40 px-4 py-2.5 rounded-md transition-all duration-300 hover:shadow-[0_0_20px_rgba(94,234,212,0.1)] group/btn self-start"
+        >
+          <svg class="w-4 h-4 text-teal-light group-hover/btn:scale-110 transition-transform duration-300" fill="currentColor" viewBox="0 0 24 24">
             <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/>
           </svg>
           Siga no Instagram
         </a>
       </div>
 
-      <!-- Hours -->
-      <div>
-        <h4 class="text-sm font-medium uppercase tracking-[0.2em] text-neutral-500 mb-4">Horário</h4>
-        <div class="text-sm text-neutral-200 space-y-1.5">
-          <p>Seg — Sex: <span class="text-neutral-500">09:00 — 20:00</span></p>
-          <p>Sábado: <span class="text-neutral-500">09:00 — 18:00</span></p>
-          <p>Domingo: <span class="text-neutral-500">Fechado</span></p>
+      <!-- Coluna 2: Horários (Estilo "Nossa Missão" com blockquote) -->
+      <div class="space-y-5">
+        <h4 class="text-xs font-bold uppercase tracking-[0.2em] text-neutral-300">Horários</h4>
+        <div class="border-l-2 border-teal pl-4 space-y-4 text-xs leading-relaxed">
+          {BUSINESS_HOURS.map((h) => {
+            // Mapeia o dia correspondente para o data attribute do script
+            let dayGroup = "";
+            if (h.label.includes("Segunda")) dayGroup = "seg-sex";
+            else if (h.label.includes("Sábado")) dayGroup = "sab";
+            else if (h.label.includes("Domingo")) dayGroup = "dom";
+
+            return (
+              <div data-day-group={dayGroup} class="flex flex-col gap-0.5 relative group/item">
+                <span class="text-[10px] uppercase tracking-wider text-neutral-500 font-semibold group-hover/item:text-neutral-400 transition-colors duration-200 day-label">
+                  {h.label}
+                </span>
+                <span class="text-neutral-300 font-medium group-hover/item:text-white transition-colors duration-200 day-hours tabular-nums">
+                  {h.hours}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
+
+      <!-- Coluna 3: Contato Corporativo -->
+      <div class="space-y-5 w-full">
+        <h4 class="text-xs font-bold uppercase tracking-[0.2em] text-neutral-300">Contato</h4>
+        <div class="space-y-4 text-xs text-neutral-400">
+          <!-- Endereço -->
+          <div class="flex items-start gap-3 group">
+            <div class="shrink-0 w-7 h-7 rounded-full bg-teal/10 border border-teal/20 flex items-center justify-center text-teal-light group-hover:border-teal/40 transition-colors duration-300">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+              </svg>
+            </div>
+            <a 
+              href={GOOGLE_MAPS_URL} 
+              target="_blank" 
+              rel="noopener" 
+              class="hover:text-white transition-colors leading-relaxed pt-0.5"
+            >
+              {ADDRESS.street}<br/>
+              {ADDRESS.city}
+            </a>
+          </div>
+
+          <!-- WhatsApp -->
+          <div class="flex items-start gap-3 group">
+            <div class="shrink-0 w-7 h-7 rounded-full bg-teal/10 border border-teal/20 flex items-center justify-center text-teal-light group-hover:border-teal/40 transition-colors duration-300">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.94.725l.548 2.2a1 1 0 01-.321.988l-1.305.98a10.582 10.582 0 004.872 4.872l.98-1.305a1 1 0 01.988-.321l2.2.548a1 1 0 01.725.94V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+              </svg>
+            </div>
+            <a 
+              href={whatsappUrl} 
+              target="_blank" 
+              rel="noopener" 
+              class="hover:text-white transition-colors pt-1.5 tabular-nums font-medium"
+            >
+              +1 (555) 154-7238
+            </a>
+          </div>
+
+          <!-- E-mail -->
+          <div class="flex items-start gap-3 group">
+            <div class="shrink-0 w-7 h-7 rounded-full bg-teal/10 border border-teal/20 flex items-center justify-center text-teal-light group-hover:border-teal/40 transition-colors duration-300">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+              </svg>
+            </div>
+            <a 
+              href="mailto:contato@barbeariabayron.com.br" 
+              class="hover:text-white transition-colors pt-1.5 break-all"
+            >
+              contato@barbeariabayron.com.br
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Coluna 4: Acesso Restrito / Navegação -->
+      <div class="space-y-5 w-full">
+        <h4 class="text-xs font-bold uppercase tracking-[0.2em] text-neutral-300">Acesso</h4>
+        <ul class="space-y-3.5 text-xs text-neutral-400">
+          <li>
+            <a href="/" class="flex items-center hover:text-white transition-colors group">
+              <span class="text-teal-light mr-2.5 transition-transform duration-200 group-hover:translate-x-0.5 font-mono text-[9px]">&gt;</span>
+              Webmail Corporativo
+            </a>
+          </li>
+          <li>
+            <a href="/" class="flex items-center hover:text-white transition-colors group">
+              <span class="text-teal-light mr-2.5 transition-transform duration-200 group-hover:translate-x-0.5 font-mono text-[9px]">&gt;</span>
+              Portal
+            </a>
+          </li>
+          <li>
+            <a href="/agendar" class="flex items-center text-teal-light hover:text-teal font-semibold transition-colors group">
+              <span class="text-teal-light mr-2.5 transition-transform duration-200 group-hover:translate-x-0.5 font-mono text-[9px]">&gt;</span>
+              Agendar Online
+              <span class="relative flex h-2 w-2 ml-2">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-light opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-teal-light"></span>
+              </span>
+            </a>
+          </li>
+          <li>
+            <a href="/admin/dia/2026-06-02" class="flex items-center text-neutral-500 hover:text-neutral-300 transition-colors group">
+              <span class="text-neutral-500/50 mr-2.5 transition-transform duration-200 group-hover:translate-x-0.5 font-mono text-[9px]">&gt;</span>
+              Painel Administrativo
+            </a>
+          </li>
+        </ul>
+      </div>
+
     </div>
 
-    <div class="border-t border-white/5 mt-12 pt-6 text-center text-xs text-neutral-500">
-      &copy; {currentYear} Barbearia Bayron. Todos os direitos reservados.
+    <!-- Divisor da base -->
+    <div class="h-[1px] bg-gradient-to-r from-transparent via-white/5 to-transparent mt-16 mb-8"></div>
+
+    <!-- Copyright & Assinatura Base -->
+    <div class="flex flex-col sm:flex-row justify-between items-center gap-4 text-[10px] text-neutral-500 text-left">
+      <div class="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-center sm:text-left">
+        <p>&copy; {currentYear} Barbearia Bayron. Todos os direitos reservados.</p>
+        <span class="hidden sm:inline text-neutral-800">|</span>
+        <div class="flex gap-3">
+          <a href="#" class="hover:text-neutral-400 transition-colors">Termos de Uso</a>
+          <span class="text-neutral-800">•</span>
+          <a href="#" class="hover:text-neutral-400 transition-colors">Políticas de Privacidade</a>
+        </div>
+      </div>
+      <p class="text-neutral-600 hover:text-teal-light/50 transition-colors duration-300 tracking-wide text-center sm:text-right">
+        Respeito e precisão em cada detalhe.
+      </p>
     </div>
   </div>
 </footer>
+
+<script>
+  // Script para destacar dinamicamente a linha do dia atual da semana
+  document.addEventListener('DOMContentLoaded', () => {
+    try {
+      const currentDay = new Date().getDay(); // 0 = Domingo, 1 = Segunda, ..., 6 = Sábado
+      let groupToHighlight = "";
+
+      if (currentDay >= 1 && currentDay <= 5) {
+        groupToHighlight = "seg-sex";
+      } else if (currentDay === 6) {
+        groupToHighlight = "sab";
+      } else if (currentDay === 0) {
+        groupToHighlight = "dom";
+      }
+
+      if (groupToHighlight) {
+        const row = document.querySelector(`[data-day-group="${groupToHighlight}"]`);
+        if (row) {
+          // Destacar a linha inteira mudando a cor do texto
+          row.classList.add('text-teal-light');
+          
+          const labelSpan = row.querySelector('.day-label');
+          const valueSpan = row.querySelector('.day-hours');
+          
+          if (labelSpan) {
+            labelSpan.classList.remove('text-neutral-500');
+            labelSpan.classList.add('text-teal-light', 'font-bold');
+          }
+          if (valueSpan) {
+            valueSpan.classList.remove('text-neutral-300');
+            valueSpan.classList.add('text-teal-light', 'font-semibold');
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao destacar dia da semana atual no Footer:", e);
+    }
+  });
+</script>

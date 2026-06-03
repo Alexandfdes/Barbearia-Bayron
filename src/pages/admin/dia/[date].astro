@@ -2,6 +2,7 @@
 export const prerender = false;
 
 import AdminLayout from '../../../layouts/AdminLayout.astro';
+import AgendaLista from '../../../components/admin/AgendaLista.astro';
 import { getSession } from '../../../lib/session.js';
 import { db } from '../../../db/index.js';
 import { appointments, barbers, services, timeOff } from '../../../db/schema.js';
@@ -312,9 +313,11 @@ const clientData = {
 
 <AdminLayout title={`${weekday}, ${formattedDate}`} barberName={barberRow.name} role={session.role}>
 
+  <div id="admin-data-container" data-client={JSON.stringify(clientData)} class="hidden"></div>
+
   <style is:global>
-    .timeline-root { --hour-px: 110px; }
-    @media (max-width: 640px) { .timeline-root { --hour-px: 72px; } }
+    .timeline-root { --hour-px: 96px; }
+    @media (max-width: 640px) { .timeline-root { --hour-px: 64px; } }
   </style>
 
 
@@ -461,16 +464,59 @@ const clientData = {
 
     <!-- Timeline -->
     <section>
-      <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center justify-between mb-3 gap-3">
         <p class="text-xs text-neutral-500 uppercase tracking-widest">
           Agenda do dia {apptList.length > 0 && `(${apptList.length})`}
         </p>
-        <p class="text-[10px] text-neutral-600 uppercase tracking-widest">
-          {String(START_HOUR).padStart(2, '0')}:00 → {String(END_HOUR).padStart(2, '0')}:00
-        </p>
+        <div class="flex items-center gap-3">
+          {apptList.length > 0 && (
+            <div class="flex gap-0.5 bg-dark-surface border border-white/10 rounded-md p-0.5">
+              <button type="button" data-view-btn="timeline"
+                class="px-2.5 py-1 text-[10px] font-medium uppercase tracking-widest rounded bg-white/5 text-neutral-200 transition-colors">
+                Linha
+              </button>
+              <button type="button" data-view-btn="list"
+                class="px-2.5 py-1 text-[10px] font-medium uppercase tracking-widest rounded text-neutral-500 transition-colors">
+                Lista
+              </button>
+            </div>
+          )}
+          <p class="text-[10px] text-neutral-600 uppercase tracking-widest hidden sm:block">
+            {String(START_HOUR).padStart(2, '0')}:00 → {String(END_HOUR).padStart(2, '0')}:00
+          </p>
+        </div>
       </div>
 
-      <div class="timeline-root bg-dark-card border border-white/5 rounded-lg overflow-hidden">
+      {(apptList.length === 0 && blockList.length === 0) ? (
+        <div class="bg-dark-card border border-white/5 rounded-lg py-14 px-6 flex flex-col items-center text-center">
+          <svg class="w-10 h-10 text-neutral-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          </svg>
+          <p class="text-sm font-medium text-neutral-300 mt-3">Nenhum agendamento para este dia</p>
+          <p class="text-xs text-neutral-500 mt-1">
+            Dia livre · expediente {String(START_HOUR).padStart(2, '0')}:00 → {String(END_HOUR).padStart(2, '0')}:00
+          </p>
+          <div class="flex flex-wrap gap-2 mt-5 justify-center">
+            <button type="button" data-empty-manual
+              class="flex items-center gap-2 text-xs px-4 py-2 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest rounded transition-colors">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+              Agendar
+            </button>
+            <button type="button" data-empty-block
+              class="flex items-center gap-2 text-xs px-4 py-2 border border-white/10 hover:border-red-500/30 text-neutral-400 hover:text-red-400 rounded transition-colors">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+              </svg>
+              Bloquear horário
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div data-agenda-views>
+        <div data-view-panel="timeline">
+        <div class="timeline-root bg-dark-card border border-white/5 rounded-lg overflow-hidden">
         <div class="relative flex" style={`height: calc(var(--hour-px) * ${TOTAL_HOURS})`}>
           <!-- Eixo de horas (esquerda) -->
           <div class="relative w-14 shrink-0 border-r border-white/5">
@@ -552,7 +598,7 @@ const clientData = {
                      data-phone-display={a.customerPhoneDisplay}
                      data-customer-name={a.customerName}
                      data-id={String(a.id)}
-                     style={`top: calc(var(--hour-px) * ${a.topMin} / 60); height: calc(var(--hour-px) * ${a.durationMin} / 60 - 4px); min-height: 56px`}>
+                     style={`top: calc(var(--hour-px) * ${a.topMin} / 60); height: calc(var(--hour-px) * ${a.durationMin} / 60 - 4px); min-height: 50px`}>
 
                   <!-- Layout em 2 linhas compactas -->
                   <div class="px-3 py-2 h-full flex flex-col justify-between">
@@ -637,15 +683,15 @@ const clientData = {
               );
             })}
 
-            {apptList.length === 0 && (
-              <div class="absolute inset-0 flex items-center justify-center">
-                <p class="text-neutral-500 text-sm">Nenhum agendamento para este dia.</p>
-              </div>
-            )}
-
           </div>
         </div>
       </div>
+        </div>
+        <div data-view-panel="list" class="hidden">
+          <AgendaLista appts={apptList} role={session.role} />
+        </div>
+        </div>
+      )}
     </section>
 
     <!-- Bottom action buttons -->
@@ -952,12 +998,58 @@ const clientData = {
     </div>
   </div>
 
+  <!-- Modal: fechar comanda -->
+  <div id="comanda-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm">
+    <div class="bg-dark-card border border-white/10 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/5">
+        <div class="min-w-0">
+          <h3 class="text-base font-medium text-neutral-100">Fechar atendimento</h3>
+          <p id="cm-appt" class="text-xs text-neutral-500 mt-0.5 truncate">—</p>
+        </div>
+        <button id="cm-close" class="text-neutral-500 hover:text-neutral-300 shrink-0 ml-3" aria-label="Fechar">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="px-5 py-4 space-y-4">
+        <div class="flex items-center justify-between text-sm">
+          <span id="cm-main-name" class="text-neutral-300 truncate">Serviço</span>
+          <span id="cm-main-price" class="text-neutral-200 tabular-nums shrink-0 ml-3">R$ 0</span>
+        </div>
+
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Adicionar serviço extra</label>
+          <div class="flex gap-2">
+            <select id="cm-extra-select" class="flex-1 min-w-0 bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+              <option value="">Selecione…</option>
+            </select>
+            <button id="cm-extra-add" class="shrink-0 px-3 py-2 border border-teal/30 text-teal-light text-sm rounded hover:bg-teal/10 transition-colors">Adicionar</button>
+          </div>
+        </div>
+
+        <div id="cm-extras" class="space-y-2"></div>
+
+        <div class="flex items-center justify-between pt-3 border-t border-white/5">
+          <span class="text-sm text-neutral-400">Total</span>
+          <span id="cm-total" class="text-lg font-bold text-teal-light tabular-nums">R$ 0</span>
+        </div>
+      </div>
+
+      <div class="flex gap-2 px-5 py-4 border-t border-white/5">
+        <button id="cm-confirm" class="flex-1 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest py-2.5 rounded text-xs transition-colors">Concluir e fechar</button>
+        <button id="cm-cancel" class="px-4 border border-white/10 text-neutral-400 hover:text-neutral-200 rounded text-xs transition-colors">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast container -->
   <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
 </AdminLayout>
 
-<script define:vars={{ clientData }}>
+<script>
+  const container = document.getElementById('admin-data-container')!;
+  const clientData = JSON.parse(container.dataset.client!);
   const { date, role, sessionBarberId, filterBarberId, allBarbers } = clientData;
 
   // ─── Calendário custom ──────────────────────────────────────────────────────
@@ -1274,13 +1366,20 @@ const clientData = {
       return;
     }
 
-    if (action === 'complete' || action === 'no-show') {
+    if (action === 'complete') {
+      e.preventDefault();
+      e.stopPropagation();
+      openComanda(id);
+      return;
+    }
+
+    if (action === 'no-show') {
       btn.disabled = true;
-      const { ok, data } = await callApi(`/api/admin/appointments/${id}/${action}`);
+      const { ok, data } = await callApi(`/api/admin/appointments/${id}/no-show`);
       if (ok) {
-        updateApptCardStatus(id, action === 'complete' ? 'completed' : 'no_show');
+        updateApptCardStatus(id, 'no_show');
         closeDetail();
-        toast(action === 'complete' ? 'Marcado como concluído' : 'Marcado como no-show', 'success');
+        toast('Marcado como no-show', 'success');
       } else {
         toast(data.error ?? 'Erro', 'error');
         btn.disabled = false;
@@ -1758,6 +1857,161 @@ const clientData = {
   document.getElementById('close-manual')?.addEventListener('click', () => formManual?.classList.add('hidden'));
   document.getElementById('close-block')?.addEventListener('click',  () => formBlock?.classList.add('hidden'));
 
+  // Botões do estado vazio reaproveitam os toggles da barra inferior
+  document.querySelector('[data-empty-manual]')?.addEventListener('click', () => document.getElementById('btn-manual')?.click());
+  document.querySelector('[data-empty-block]')?.addEventListener('click',  () => document.getElementById('btn-block')?.click());
+
+  // ─── Comanda: fechar atendimento com serviços extras ─────────────────────────
+  const comandaModal = document.getElementById('comanda-modal');
+  let comandaApptId: string | null = null;
+  let comandaExtras: { serviceId: number; name: string; priceCents: number }[] = [];
+  let servicesCatalog: any[] | null = null;
+
+  async function ensureServicesCatalog() {
+    if (servicesCatalog) return servicesCatalog;
+    try {
+      const res = await fetch('/api/services');
+      servicesCatalog = res.ok ? await res.json() : [];
+    } catch { servicesCatalog = []; }
+    return servicesCatalog;
+  }
+
+  function renderComanda() {
+    const appt = clientData.appts.find(a => String(a.id) === String(comandaApptId));
+    const mainCents = appt ? appt.priceCents : 0;
+    const list = document.getElementById('cm-extras');
+    if (list) {
+      list.innerHTML = '';
+      comandaExtras.forEach((ex, i) => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between gap-2 text-sm bg-dark-surface rounded px-3 py-2';
+        row.innerHTML = `<span class="text-neutral-300">${ex.name}</span><span class="flex items-center gap-3"><span class="text-neutral-400 tabular-nums">R$ ${Math.round(ex.priceCents / 100)}</span><button type="button" data-cm-remove="${i}" class="text-red-400/70 hover:text-red-400" aria-label="Remover">✕</button></span>`;
+        list.appendChild(row);
+      });
+    }
+    const total = mainCents + comandaExtras.reduce((s, e) => s + e.priceCents, 0);
+    const totalEl = document.getElementById('cm-total');
+    if (totalEl) totalEl.textContent = 'R$ ' + Math.round(total / 100);
+  }
+
+  async function openComanda(id: string) {
+    const appt = clientData.appts.find(a => String(a.id) === String(id));
+    if (!appt) return;
+    comandaApptId = id;
+    comandaExtras = [];
+
+    const apptEl  = document.getElementById('cm-appt');
+    const nameEl  = document.getElementById('cm-main-name');
+    const priceEl = document.getElementById('cm-main-price');
+    if (apptEl)  apptEl.textContent  = `${appt.customerName} · ${appt.timeLocal}`;
+    if (nameEl)  nameEl.textContent  = appt.serviceName;
+    if (priceEl) priceEl.textContent = appt.price;
+
+    const select = document.getElementById('cm-extra-select') as HTMLSelectElement | null;
+    const catalog = await ensureServicesCatalog();
+    if (select && select.options.length <= 1) {
+      catalog.forEach((svc: any) => {
+        const opt = document.createElement('option');
+        opt.value = String(svc.id);
+        opt.dataset.name  = svc.name;
+        opt.dataset.cents = String(svc.priceCents);
+        opt.textContent   = `${svc.name} — R$ ${Math.round(svc.priceCents / 100)}`;
+        select.appendChild(opt);
+      });
+    }
+    renderComanda();
+    comandaModal?.classList.remove('hidden');
+  }
+
+  function closeComanda() {
+    comandaModal?.classList.add('hidden');
+    comandaApptId = null;
+    comandaExtras = [];
+  }
+
+  document.getElementById('cm-extra-add')?.addEventListener('click', () => {
+    const select = document.getElementById('cm-extra-select') as HTMLSelectElement | null;
+    if (!select || !select.value) return;
+    const opt = select.options[select.selectedIndex];
+    comandaExtras.push({
+      serviceId:  Number(select.value),
+      name:       opt.dataset.name ?? 'Serviço',
+      priceCents: Number(opt.dataset.cents ?? '0'),
+    });
+    select.value = '';
+    renderComanda();
+  });
+
+  document.getElementById('cm-extras')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-cm-remove]');
+    if (!btn) return;
+    comandaExtras.splice(Number(btn.dataset.cmRemove), 1);
+    renderComanda();
+  });
+
+  document.getElementById('cm-cancel')?.addEventListener('click', closeComanda);
+  document.getElementById('cm-close')?.addEventListener('click', closeComanda);
+  comandaModal?.addEventListener('click', (e) => { if (e.target === comandaModal) closeComanda(); });
+
+  document.getElementById('cm-confirm')?.addEventListener('click', async () => {
+    if (comandaApptId == null) return;
+    const id = comandaApptId;
+    const btn = document.getElementById('cm-confirm') as HTMLButtonElement | null;
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    const extras = comandaExtras.map(e => ({ serviceId: e.serviceId, priceCents: e.priceCents }));
+    const { ok, data } = await callApi(`/api/admin/appointments/${id}/complete`, 'POST', { extras });
+    if (ok) {
+      updateApptCardStatus(id, 'completed');
+      closeComanda();
+      closeDetail();
+      toast(extras.length ? 'Atendimento fechado' : 'Marcado como concluído', 'success');
+    } else {
+      toast(data.error ?? 'Erro', 'error');
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Concluir e fechar'; }
+  });
+
+  // ─── Toggle Linha do tempo / Lista ───────────────────────────────────────────
+  (function setupViewToggle() {
+    const btns = document.querySelectorAll('[data-view-btn]');
+    if (!btns.length) return;
+    const panelTimeline = document.querySelector('[data-view-panel="timeline"]');
+    const panelList     = document.querySelector('[data-view-panel="list"]');
+
+    function syncListView() {
+      document.querySelectorAll('[data-list-appt]').forEach(item => {
+        const appt = clientData.appts.find(a => String(a.id) === String(item.dataset.listAppt));
+        if (!appt) return;
+        const final = appt.status === 'completed' || appt.status === 'cancelled' || appt.status === 'no_show';
+        item.classList.toggle('opacity-70', final);
+        const badge = item.querySelector('[data-list-status]');
+        if (!badge) return;
+        if (appt.status === 'completed')      { badge.textContent = '✓ Concluído'; badge.className = 'text-[10px] tabular-nums text-teal-light/80'; }
+        else if (appt.status === 'cancelled') { badge.textContent = '✕ Cancelado'; badge.className = 'text-[10px] tabular-nums text-red-400/80'; }
+        else if (appt.status === 'no_show')   { badge.textContent = '✗ No-show';   badge.className = 'text-[10px] tabular-nums text-amber-400/80'; }
+      });
+    }
+
+    function setView(view) {
+      panelTimeline?.classList.toggle('hidden', view !== 'timeline');
+      panelList?.classList.toggle('hidden', view !== 'list');
+      btns.forEach(b => {
+        const active = b.dataset.viewBtn === view;
+        b.classList.toggle('bg-white/5', active);
+        b.classList.toggle('text-neutral-200', active);
+        b.classList.toggle('text-neutral-500', !active);
+      });
+      try { localStorage.setItem('agenda-view', view); } catch { /* noop */ }
+      if (view === 'list') syncListView();
+    }
+
+    btns.forEach(b => b.addEventListener('click', () => setView(b.dataset.viewBtn)));
+
+    let saved = 'timeline';
+    try { saved = localStorage.getItem('agenda-view') || 'timeline'; } catch { /* noop */ }
+    if (saved === 'list') setView('list');
+  })();
+
   // ─── Manual booking form ─────────────────────────────────────────────────────
   let selectedSlot = null;
 
@@ -1946,6 +2200,15 @@ const clientData = {
       if (now) {
         const rect = now.getBoundingClientRect();
         window.scrollTo({ top: window.scrollY + rect.top - 200, behavior: 'smooth' });
+      }
+    });
+  } else {
+    // Dia passado/futuro: abre já no primeiro agendamento, se houver
+    requestAnimationFrame(() => {
+      const firstCard = document.querySelector('.appt-card');
+      if (firstCard) {
+        const rect = firstCard.getBoundingClientRect();
+        window.scrollTo({ top: window.scrollY + rect.top - 160, behavior: 'smooth' });
       }
     });
   }
