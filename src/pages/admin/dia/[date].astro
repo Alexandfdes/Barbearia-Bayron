@@ -5,9 +5,11 @@ import AdminLayout from '../../../layouts/AdminLayout.astro';
 import AgendaLista from '../../../components/admin/AgendaLista.astro';
 import { getSession } from '../../../lib/session.js';
 import { db } from '../../../db/index.js';
-import { appointments, barbers, services, timeOff } from '../../../db/schema.js';
-import { eq, and, gte, lt, or, isNull } from 'drizzle-orm';
+import { appointments, barbers, services, timeOff, workingHours } from '../../../db/schema.js';
+import { eq, and, gt, gte, lt, or, isNull } from 'drizzle-orm';
 import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
+import { waPhone } from '../../../lib/whatsapp.js';
+import { computeOccupancy, pickEmptiestBand } from '../../../lib/occupancy.js';
 
 const TZ = 'America/Fortaleza';
 
@@ -132,7 +134,8 @@ interface ApptView {
   price: string;
   topMin: number;
   durationMin: number;
-  whatsappUrl: string;
+  /** Telefone normalizado p/ wa.me (55+DDD+número) ou null se inválido */
+  wa: string | null;
   telUrl: string;
   isPast: boolean;
   isLate: boolean;
@@ -145,16 +148,6 @@ interface BlockView {
   durationMin: number;
   timeLocal: string;
   endTimeLocal: string;
-}
-
-function buildWhatsappUrl(phone: string, name: string, time: string, dateStr: string): string {
-  const digits  = (phone ?? '').replace(/\D/g, '');
-  const withDDI = digits.startsWith('55') ? digits : `55${digits}`;
-  const first   = (name ?? '').split(' ')[0] || 'cliente';
-  const todayStr = formatInTimeZone(new Date(), TZ, 'yyyy-MM-dd');
-  const dia = dateStr === todayStr ? 'hoje' : `dia ${dateStr.split('-').reverse().slice(0, 2).join('/')}`;
-  const msg = `Olá ${first}, aqui da Barbearia Bayron — lembrando do seu horário ${dia} às ${time}. Qualquer coisa é só me chamar!`;
-  return `https://wa.me/${withDDI}?text=${encodeURIComponent(msg)}`;
 }
 
 function formatPhoneDisplay(phone: string): string {
@@ -185,8 +178,9 @@ const apptList: ApptView[] = apptRows.map(a => {
   const pos = timelinePos(a.startsAt, a.endsAt);
   const time     = formatInTimeZone(new Date(a.startsAt), TZ, 'HH:mm');
   const endTime  = formatInTimeZone(new Date(a.endsAt),   TZ, 'HH:mm');
+  const wa       = waPhone(a.customerPhone);
   const digits   = (a.customerPhone ?? '').replace(/\D/g, '');
-  const telDigits = digits.startsWith('55') ? digits : `55${digits}`;
+  const telDigits = wa ?? (digits.startsWith('55') ? digits : `55${digits}`);
 
   return {
     id:              a.id,
@@ -209,7 +203,7 @@ const apptList: ApptView[] = apptRows.map(a => {
     price:           `R$ ${(a.priceCents / 100).toFixed(0)}`,
     topMin:          pos.topMin,
     durationMin:     pos.durationMin,
-    whatsappUrl:     buildWhatsappUrl(a.customerPhone, a.customerName, time, date),
+    wa,
     telUrl:          `tel:+${telDigits}`,
     isPast:          new Date(a.endsAt) <= nowUtc,
     isLate:          a.status === 'confirmed' && new Date(a.startsAt) < nowUtc,
@@ -267,6 +261,46 @@ const dateObj    = new Date(Date.UTC(y, m - 1, d, 12));
 const weekday    = WEEKDAYS[dateObj.getDay()];
 const formattedDate = `${d} de ${MONTHS[m - 1]} de ${y}`;
 
+// ─── Insight de ocupação da próxima semana (só admin, só na visão de hoje) ────
+// "Terça (16/06) de manhã está 80% vazia" — empurra o dado pra onde o dono já olha.
+let occupancyInsight: { text: string; pct: number } | null = null;
+if (session.role === 'admin' && isToday) {
+  const nextDays = Array.from({ length: 7 }, (_, i) => {
+    const ds = offsetDate(todayStr, i + 1);
+    const [yy, mm, dd] = ds.split('-').map(Number);
+    return { dateStr: ds, weekday: new Date(Date.UTC(yy, mm - 1, dd, 12)).getUTCDay() };
+  });
+  const weekStartIso = fromZonedTime(`${nextDays[0].dateStr}T00:00:00`, TZ).toISOString();
+  const weekEndIso   = fromZonedTime(`${nextDays[6].dateStr}T23:59:59`, TZ).toISOString();
+
+  const whRows = db
+    .select({ barberId: workingHours.barberId, weekday: workingHours.weekday, startTime: workingHours.startTime, endTime: workingHours.endTime })
+    .from(workingHours)
+    .innerJoin(barbers, eq(barbers.id, workingHours.barberId))
+    .where(eq(barbers.active, true))
+    .all();
+  const weekAppts = db
+    .select({ barberId: appointments.barberId, startsAt: appointments.startsAt, endsAt: appointments.endsAt })
+    .from(appointments)
+    .where(and(eq(appointments.status, 'confirmed'), gte(appointments.startsAt, weekStartIso), lt(appointments.startsAt, weekEndIso)))
+    .all();
+  const weekTimeOff = db
+    .select({ barberId: timeOff.barberId, startsAt: timeOff.startsAt, endsAt: timeOff.endsAt })
+    .from(timeOff)
+    .where(and(lt(timeOff.startsAt, weekEndIso), gt(timeOff.endsAt, weekStartIso)))
+    .all();
+
+  const occ  = computeOccupancy({ days: nextDays, workingHours: whRows, timeOff: weekTimeOff, appointments: weekAppts });
+  const pick = pickEmptiestBand(occ);
+  if (pick) {
+    const ddmm = pick.dateStr.split('-').reverse().slice(0, 2).join('/');
+    occupancyInsight = {
+      text: `${WEEKDAYS[pick.weekday]} (${ddmm}) ${pick.bandLabel}`,
+      pct:  pick.freePct,
+    };
+  }
+}
+
 const filterQs = filterBarberId ? `?barber=${filterBarberId}` : '';
 
 // Linhas de hora pra render no eixo esquerdo (em "índice de hora" — multiplica por --hour-px no CSS)
@@ -294,7 +328,7 @@ const apptsLite = apptList.map(a => ({
   price:             a.price,
   timeLocal:         a.timeLocal,
   endTimeLocal:      a.endTimeLocal,
-  whatsappUrl:       a.whatsappUrl,
+  wa:                a.wa,
   telUrl:            a.telUrl,
 }));
 
@@ -318,6 +352,15 @@ const clientData = {
   <style is:global>
     .timeline-root { --hour-px: 96px; }
     @media (max-width: 640px) { .timeline-root { --hour-px: 64px; } }
+
+    /* Barra de rolagem discreta no tema escuro (substitui a branca do sistema) */
+    .modal-scroll { scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+    .modal-scroll::-webkit-scrollbar { width: 8px; }
+    .modal-scroll::-webkit-scrollbar-track { background: transparent; }
+    .modal-scroll::-webkit-scrollbar-thumb {
+      background: #333; border-radius: 9999px; border: 2px solid transparent; background-clip: content-box;
+    }
+    .modal-scroll::-webkit-scrollbar-thumb:hover { background: #4a4a4a; background-clip: content-box; }
   </style>
 
 
@@ -461,6 +504,19 @@ const clientData = {
         </div>
       )}
     </section>
+
+    <!-- Insight de ocupação da próxima semana (admin) -->
+    {occupancyInsight && (
+      <div class="bg-dark-card border border-amber-500/20 rounded-lg px-4 py-3 flex items-center gap-3">
+        <span class="text-base shrink-0">📉</span>
+        <p class="text-xs text-neutral-400 leading-relaxed">
+          <span class="text-neutral-200 font-medium">Semana que vem:</span>
+          {' '}{occupancyInsight.text} está
+          <span class="text-amber-400 font-semibold"> {occupancyInsight.pct}% vazia</span>
+          {' '}— bom alvo pra uma promoção.
+        </p>
+      </div>
+    )}
 
     <!-- Timeline -->
     <section>
@@ -652,15 +708,15 @@ const clientData = {
                   {a.status === 'confirmed' && (
                     <div id={`actions-${a.id}`}
                          class="absolute inset-x-0 bottom-0 px-2 py-1.5 bg-gradient-to-t from-black/95 via-black/85 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-wrap gap-1.5 justify-end pointer-events-none group-hover:pointer-events-auto">
-                      <a href={a.whatsappUrl} target="_blank" rel="noopener"
-                         class="px-2 py-1 rounded border border-green-500/30 bg-black/40 hover:bg-green-500/15 text-[10px] font-medium text-green-400 transition-colors flex items-center gap-1"
-                         title="Falar no WhatsApp"
-                         data-no-card-click>
+                      <button type="button" data-action="wa-menu" data-id={String(a.id)}
+                         class:list={['px-2 py-1 rounded border bg-black/40 text-[10px] font-medium transition-colors flex items-center gap-1',
+                           a.wa ? 'border-green-500/30 hover:bg-green-500/15 text-green-400' : 'border-white/10 text-neutral-600 cursor-not-allowed']}
+                         title={a.wa ? 'Mensagens rápidas no WhatsApp' : 'Telefone inválido — corrija em Detalhes'}>
                         <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
                           <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
                         </svg>
                         WhatsApp
-                      </a>
+                      </button>
                       <button data-action="open-detail" data-id={String(a.id)}
                               class="px-2 py-1 rounded border border-white/15 bg-black/40 hover:bg-white/5 text-[10px] font-medium text-neutral-300 transition-colors">
                         Detalhes
@@ -836,18 +892,24 @@ const clientData = {
 
   <!-- Modal de detalhes do agendamento -->
   <div id="detail-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm">
-    <div class="bg-dark-card border border-white/10 rounded-t-lg sm:rounded-lg shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+    <div class="modal-scroll bg-dark-card border border-white/10 rounded-t-lg sm:rounded-lg shadow-2xl w-full max-w-md sm:max-w-2xl lg:max-w-4xl max-h-[90vh] overflow-y-auto">
       <!-- Header -->
       <div class="flex items-start justify-between gap-4 p-5 border-b border-white/5">
         <div class="min-w-0 flex-1">
-          <p id="dm-name" class="text-lg font-bold text-neutral-100 truncate">—</p>
+          <div class="flex items-center gap-2 min-w-0">
+            <p id="dm-name" class="text-lg font-bold text-neutral-100 truncate">—</p>
+            <span id="dm-birthday" class="hidden shrink-0 text-[10px] font-bold text-amber-200 bg-amber-500/15 border border-amber-400/30 px-1.5 py-0.5 rounded-full whitespace-nowrap"></span>
+          </div>
           <p id="dm-service" class="text-sm text-neutral-400 truncate">—</p>
         </div>
         <button id="dm-close" class="text-neutral-500 hover:text-neutral-200 text-xl leading-none -mt-1 -mr-1 p-1">×</button>
       </div>
 
       <!-- Info -->
-      <div class="p-5 space-y-4">
+      <div class="p-5">
+       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4 items-start">
+        <!-- Coluna 1: info, ficha, contato, notas -->
+        <div class="space-y-4">
         <!-- Horário + duração + valor -->
         <div class="grid grid-cols-3 gap-3 text-center">
           <div class="bg-dark-surface border border-white/5 rounded p-3">
@@ -862,6 +924,12 @@ const clientData = {
             <p class="text-[10px] text-neutral-500 uppercase tracking-widest">Valor</p>
             <p id="dm-price" class="text-base font-bold text-neutral-200 tabular-nums mt-1">—</p>
           </div>
+        </div>
+
+        <!-- Ficha do cliente -->
+        <div>
+          <p class="text-[10px] text-neutral-500 uppercase tracking-widest mb-1.5">Cliente</p>
+          <div id="dm-stats" class="text-xs text-neutral-600 italic">Carregando…</div>
         </div>
 
         <!-- Contato -->
@@ -882,13 +950,13 @@ const clientData = {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
               </svg>
             </button>
-            <a id="dm-whatsapp" href="#" target="_blank" rel="noopener"
+            <button id="dm-whatsapp" type="button" data-action="wa-menu" data-id=""
                class="px-2.5 py-2 rounded border border-green-500/30 hover:bg-green-500/10 text-green-400 transition-colors"
-               title="WhatsApp">
+               title="Mensagens rápidas no WhatsApp">
               <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884"/>
               </svg>
-            </a>
+            </button>
           </div>
         </div>
 
@@ -905,7 +973,10 @@ const clientData = {
             </button>
           </div>
         </div>
+        </div><!-- /coluna 1 -->
 
+        <!-- Coluna 2: histórico + editar -->
+        <div class="space-y-4">
         <!-- Histórico do cliente -->
         <div>
           <div class="flex items-center justify-between mb-1.5">
@@ -955,7 +1026,10 @@ const clientData = {
             </div>
           </div>
         </details>
+        </div><!-- /coluna 2 -->
 
+        <!-- Coluna 3: mover horário (ocupa a largura toda quando só há 2 colunas) -->
+        <div class="space-y-4 sm:col-span-2 lg:col-span-1">
         <!-- Mover horário -->
         <div>
           <p class="text-[10px] text-neutral-500 uppercase tracking-widest mb-1.5">Mover horário</p>
@@ -971,6 +1045,8 @@ const clientData = {
             </button>
           </div>
         </div>
+        </div><!-- /coluna 3 -->
+       </div><!-- /grid -->
       </div>
 
       <!-- Última modificação (auditoria) -->
@@ -980,8 +1056,8 @@ const clientData = {
         </p>
       </div>
 
-      <!-- Footer com ações principais -->
-      <div class="border-t border-white/5 p-4 flex gap-2">
+      <!-- Footer com ações principais (fixo no rodapé do modal) -->
+      <div class="border-t border-white/5 p-4 flex gap-2 sticky bottom-0 bg-dark-card z-10">
         <button data-action="complete" data-id="" id="dm-complete"
                 class="flex-1 border border-teal/30 hover:bg-teal/15 text-teal-light text-xs font-bold uppercase tracking-widest py-2.5 rounded transition-colors">
           ✓ Concluir
@@ -1042,12 +1118,82 @@ const clientData = {
     </div>
   </div>
 
+  <!-- Modal: ação rápida no espaço vazio da timeline -->
+  <div id="express-modal" class="hidden fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm">
+    <div class="bg-dark-card border border-white/10 rounded-t-lg sm:rounded-lg shadow-2xl max-w-sm w-full p-5">
+      <div class="flex items-start justify-between gap-3 mb-4">
+        <p class="text-sm font-medium text-neutral-100">
+          <span id="ex-time" class="text-teal-light tabular-nums">—</span> — o que fazer?
+        </p>
+        <button id="ex-close" type="button" class="text-neutral-500 hover:text-neutral-200 text-xl leading-none -mt-1 -mr-1 p-1">×</button>
+      </div>
+
+      <div class="space-y-2">
+        <button id="ex-agendar" type="button"
+           class="w-full text-left bg-dark-surface border border-white/5 hover:border-teal/40 rounded-md px-3 py-2.5 transition-colors group">
+          <p class="text-sm font-medium text-neutral-200 group-hover:text-teal-light transition-colors">📅 Encaixar cliente</p>
+          <p class="text-[11px] text-neutral-500 mt-0.5">Barbeiro e horário já preenchidos — só escolher serviço, nome e telefone</p>
+        </button>
+        <button id="ex-block-30" type="button" data-ex-minutes="30"
+           class="w-full text-left bg-dark-surface border border-white/5 hover:border-red-500/40 rounded-md px-3 py-2.5 transition-colors group disabled:opacity-40 disabled:cursor-not-allowed">
+          <p class="text-sm font-medium text-neutral-200 group-hover:text-red-400 transition-colors">☕ Bloquear 30 min</p>
+          <p class="text-[11px] text-neutral-500 mt-0.5">Café, descanso, encaixe pessoal</p>
+        </button>
+        <button id="ex-block-60" type="button" data-ex-minutes="60"
+           class="w-full text-left bg-dark-surface border border-white/5 hover:border-red-500/40 rounded-md px-3 py-2.5 transition-colors group disabled:opacity-40 disabled:cursor-not-allowed">
+          <p class="text-sm font-medium text-neutral-200 group-hover:text-red-400 transition-colors">🍽️ Bloquear 1 hora</p>
+          <p class="text-[11px] text-neutral-500 mt-0.5">Almoço, emergência</p>
+        </button>
+      </div>
+
+      <p id="ex-hint" class="hidden text-[11px] text-amber-400/80 mt-3">
+        Na visão "Todos", filtre por um barbeiro para usar o bloqueio rápido.
+      </p>
+    </div>
+  </div>
+
+  <!-- Modal: mensagens rápidas WhatsApp -->
+  <div id="wa-modal" class="hidden fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm">
+    <div class="bg-dark-card border border-white/10 rounded-t-lg sm:rounded-lg shadow-2xl max-w-sm w-full p-5">
+      <div class="flex items-start justify-between gap-3 mb-1">
+        <p class="text-sm font-medium text-neutral-100">Enviar WhatsApp</p>
+        <button id="wa-close" type="button" class="text-neutral-500 hover:text-neutral-200 text-xl leading-none -mt-1 -mr-1 p-1">×</button>
+      </div>
+      <p id="wa-sub" class="text-xs text-neutral-500 mb-4 truncate">—</p>
+
+      <div class="space-y-2">
+        <a id="wa-opt-lembrete" href="#" target="_blank" rel="noopener"
+           class="block bg-dark-surface border border-white/5 hover:border-green-500/40 rounded-md px-3 py-2.5 transition-colors group">
+          <p class="text-sm font-medium text-neutral-200 group-hover:text-green-400 transition-colors">🔔 Lembrete do horário</p>
+          <p data-wa-preview class="text-[11px] text-neutral-500 mt-0.5 line-clamp-2">—</p>
+        </a>
+        <a id="wa-opt-atraso-cliente" href="#" target="_blank" rel="noopener"
+           class="block bg-dark-surface border border-white/5 hover:border-green-500/40 rounded-md px-3 py-2.5 transition-colors group">
+          <p class="text-sm font-medium text-neutral-200 group-hover:text-green-400 transition-colors">🏃 Cliente atrasado — está a caminho?</p>
+          <p data-wa-preview class="text-[11px] text-neutral-500 mt-0.5 line-clamp-2">—</p>
+        </a>
+        <a id="wa-opt-atraso-barbeiro" href="#" target="_blank" rel="noopener"
+           class="block bg-dark-surface border border-white/5 hover:border-green-500/40 rounded-md px-3 py-2.5 transition-colors group">
+          <p class="text-sm font-medium text-neutral-200 group-hover:text-green-400 transition-colors">⏳ Avisar meu atraso (+15 min)</p>
+          <p data-wa-preview class="text-[11px] text-neutral-500 mt-0.5 line-clamp-2">—</p>
+        </a>
+        <a id="wa-opt-livre" href="#" target="_blank" rel="noopener"
+           class="block bg-dark-surface border border-white/5 hover:border-green-500/40 rounded-md px-3 py-2.5 transition-colors group">
+          <p class="text-sm font-medium text-neutral-200 group-hover:text-green-400 transition-colors">💬 Conversa em branco</p>
+          <p class="text-[11px] text-neutral-500 mt-0.5">Abre o chat sem mensagem pronta</p>
+        </a>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast container -->
   <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
 </AdminLayout>
 
 <script>
+  import { waPhone, waLink, buildWaMessages } from '../../../lib/whatsapp';
+
   const container = document.getElementById('admin-data-container')!;
   const clientData = JSON.parse(container.dataset.client!);
   const { date, role, sessionBarberId, filterBarberId, allBarbers } = clientData;
@@ -1366,6 +1512,13 @@ const clientData = {
       return;
     }
 
+    if (action === 'wa-menu') {
+      e.preventDefault();
+      e.stopPropagation();
+      openWaMenu(id);
+      return;
+    }
+
     if (action === 'complete') {
       e.preventDefault();
       e.stopPropagation();
@@ -1405,6 +1558,47 @@ const clientData = {
     }
   });
 
+  // ─── Modal de mensagens rápidas WhatsApp ───────────────────────────────────
+  const waModal = document.getElementById('wa-modal');
+  const waSub   = document.getElementById('wa-sub');
+  const waClose = document.getElementById('wa-close');
+  const waOptLembrete = document.getElementById('wa-opt-lembrete');
+  const waOptAtrasoCliente = document.getElementById('wa-opt-atraso-cliente');
+  const waOptAtrasoBarbeiro = document.getElementById('wa-opt-atraso-barbeiro');
+  const waOptLivre = document.getElementById('wa-opt-livre');
+
+  function diaLabel() {
+    return clientData.date === clientData.todayStr
+      ? 'hoje'
+      : `dia ${clientData.date.split('-').reverse().slice(0, 2).join('/')}`;
+  }
+
+  function openWaMenu(id) {
+    const appt = clientData.appts.find(a => String(a.id) === String(id));
+    if (!appt) return;
+    if (!appt.wa) {
+      toast('Telefone inválido — corrija nos detalhes do agendamento', 'error');
+      return;
+    }
+    const msgs = buildWaMessages(appt.customerName, appt.timeLocal, diaLabel());
+    waSub.textContent = `${appt.customerName} · ${appt.timeLocal} · ${appt.customerPhoneDisplay}`;
+    waOptLembrete.href        = waLink(appt.wa, msgs.lembrete);
+    waOptAtrasoCliente.href   = waLink(appt.wa, msgs.clienteAtrasado);
+    waOptAtrasoBarbeiro.href  = waLink(appt.wa, msgs.barbeiroAtrasado);
+    waOptLivre.href           = waLink(appt.wa);
+    waOptLembrete.querySelector('[data-wa-preview]').textContent       = msgs.lembrete;
+    waOptAtrasoCliente.querySelector('[data-wa-preview]').textContent  = msgs.clienteAtrasado;
+    waOptAtrasoBarbeiro.querySelector('[data-wa-preview]').textContent = msgs.barbeiroAtrasado;
+    waModal.classList.remove('hidden');
+  }
+  function closeWaMenu() { waModal?.classList.add('hidden'); }
+  waClose?.addEventListener('click', closeWaMenu);
+  waModal?.addEventListener('click', (e) => { if (e.target === waModal) closeWaMenu(); });
+  // Fecha o menu depois de abrir o WhatsApp
+  [waOptLembrete, waOptAtrasoCliente, waOptAtrasoBarbeiro, waOptLivre].forEach(a => {
+    a?.addEventListener('click', () => setTimeout(closeWaMenu, 150));
+  });
+
   // ─── Modal de detalhes ─────────────────────────────────────────────────────
   const detailModal = document.getElementById('detail-modal');
   const dmName      = document.getElementById('dm-name');
@@ -1428,6 +1622,8 @@ const clientData = {
   const dmMoveConfirm = document.getElementById('dm-move-confirm');
   const dmHistory      = document.getElementById('dm-history');
   const dmHistoryCount = document.getElementById('dm-history-count');
+  const dmStats        = document.getElementById('dm-stats');
+  const dmBirthday     = document.getElementById('dm-birthday');
   const dmEditName     = document.getElementById('dm-edit-name');
   const dmEditPhone    = document.getElementById('dm-edit-phone');
   const dmEditBirthdate= document.getElementById('dm-edit-birthdate');
@@ -1438,6 +1634,13 @@ const clientData = {
   let currentMoveSlot = null;
   let notesOriginal = '';
   let editOriginal = { name: '', phone: '', birthdate: '' };
+
+  // Estado visual do botão WhatsApp do modal conforme validade do telefone
+  function setWaButtonState(btn, wa) {
+    if (!btn) return;
+    btn.classList.toggle('opacity-40', !wa);
+    btn.title = wa ? 'Mensagens rápidas no WhatsApp' : 'Telefone inválido — corrija abaixo';
+  }
 
   // Máscara de telefone (DDD + número)
   function maskPhone(raw) {
@@ -1496,6 +1699,65 @@ const clientData = {
     if (changed) dmEditStatus.textContent = '';
   }
 
+  // Selo de aniversário no header (compara dia/mês no fuso de Fortaleza).
+  function setBirthdayBadge(iso) {
+    if (!dmBirthday) return;
+    dmBirthday.classList.add('hidden');
+    dmBirthday.textContent = '';
+    if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
+    const [, bm, bd] = iso.split('-').map(Number);
+    const fortNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Fortaleza' }));
+    const tMonth = fortNow.getMonth() + 1, tDay = fortNow.getDate();
+    if (bm === tMonth && bd === tDay) {
+      dmBirthday.textContent = '🎂 Aniversário hoje!';
+      dmBirthday.classList.remove('hidden');
+    } else if (bm === tMonth) {
+      dmBirthday.textContent = '🎂 Aniversário este mês';
+      dmBirthday.classList.remove('hidden');
+    }
+  }
+
+  // Ficha do cliente: faixa de stats agregados.
+  function renderClientStats(stats, total) {
+    if (!dmStats) return;
+    const brl = (c) => 'R$ ' + Math.round((c || 0) / 100).toLocaleString('pt-BR');
+
+    // Primeira visita: só existe o agendamento atual.
+    if (!stats || (total ?? stats.totalCount) <= 1) {
+      dmStats.className = '';
+      dmStats.innerHTML = '<p class="text-xs text-teal-light bg-teal/10 border border-teal/20 rounded px-3 py-2">✨ Primeira visita deste cliente</p>';
+      return;
+    }
+
+    const riskColor = stats.noShowRate >= 25 ? 'text-red-400'
+                    : stats.noShowRate >= 10 ? 'text-amber-400'
+                    : 'text-neutral-200';
+
+    let since = '';
+    if (stats.firstVisitAt) {
+      const d = new Date(stats.firstVisitAt);
+      since = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit', timeZone: 'America/Fortaleza' });
+    }
+
+    const cell = (label, value, cls = 'text-neutral-200') => `
+      <div class="bg-dark-surface border border-white/5 rounded p-2 text-center">
+        <p class="text-[9px] text-neutral-500 uppercase tracking-wider">${label}</p>
+        <p class="text-sm font-bold ${cls} tabular-nums mt-0.5">${value}</p>
+      </div>`;
+
+    dmStats.className = '';
+    dmStats.innerHTML = `
+      <div class="grid grid-cols-3 gap-2">
+        ${cell('Gasto total', brl(stats.totalSpentCents), 'text-teal-light')}
+        ${cell('Visitas', String(stats.completedCount))}
+        ${cell('Faltas', `${stats.noShowCount}${stats.noShowRate ? ` · ${stats.noShowRate}%` : ''}`, riskColor)}
+      </div>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-neutral-500">
+        ${stats.favoriteService ? `<span>Favorito: <span class="text-neutral-300">${stats.favoriteService}</span></span>` : ''}
+        ${since ? `<span>Cliente desde <span class="text-neutral-300">${since}</span></span>` : ''}
+      </div>`;
+  }
+
   async function loadHistory(id) {
     if (!dmHistory) return;
     dmHistory.innerHTML = '<p class="text-neutral-600 italic">Carregando...</p>';
@@ -1505,8 +1767,10 @@ const clientData = {
       const data = await res.json();
       if (!res.ok) {
         dmHistory.innerHTML = '<p class="text-red-400">Erro ao carregar histórico</p>';
+        if (dmStats) { dmStats.className = 'text-xs text-neutral-600 italic'; dmStats.textContent = ''; }
         return;
       }
+      renderClientStats(data.stats, data.total);
       if (!data.history?.length) {
         dmHistory.innerHTML = '<p class="text-neutral-600">Primeira visita deste cliente.</p>';
         if (dmHistoryCount) dmHistoryCount.textContent = '1 total';
@@ -1581,16 +1845,14 @@ const clientData = {
         appt.customerName  = name;
         appt.customerPhone = dmEditPhone.value;
         appt.customerPhoneDisplay = maskPhone(dmEditPhone.value);
-        // Recalcula whatsapp/tel URLs
-        const digits = phoneDigits;
-        const withDDI = digits.startsWith('55') ? digits : `55${digits}`;
-        appt.telUrl = `tel:+${withDDI}`;
-        appt.whatsappUrl = appt.whatsappUrl.replace(/wa\.me\/\d+/, `wa.me/${withDDI}`);
+        // Recalcula telefone normalizado (wa.me) e tel:
+        appt.wa = waPhone(phoneDigits);
+        appt.telUrl = `tel:+${appt.wa ?? (phoneDigits.startsWith('55') ? phoneDigits : `55${phoneDigits}`)}`;
       }
       dmName.textContent  = name;
       dmPhone.textContent = maskPhone(dmEditPhone.value);
       dmTel.href = appt?.telUrl ?? '#';
-      dmWhats.href = appt?.whatsappUrl ?? '#';
+      setWaButtonState(dmWhats, appt?.wa);
       // Atualiza data attrs do card na timeline
       const card = document.getElementById(`appt-${currentApptId}`);
       if (card) {
@@ -1619,7 +1881,8 @@ const clientData = {
     dmPrice.textContent    = appt.price;
     dmPhone.textContent    = appt.customerPhoneDisplay || '—';
     dmTel.href             = appt.telUrl;
-    dmWhats.href           = appt.whatsappUrl;
+    dmWhats.dataset.id     = String(appt.id);
+    setWaButtonState(dmWhats, appt.wa);
     dmNotes.value          = appt.notes ?? '';
     notesOriginal          = dmNotes.value;
     dmNotesStatus.textContent = '';
@@ -1633,7 +1896,9 @@ const clientData = {
     dmEditSave.classList.add('hidden');
     dmEditStatus.textContent = '';
 
-    // Carrega histórico assíncrono
+    // Ficha do cliente: reseta, marca aniversário e carrega stats + histórico
+    if (dmStats) { dmStats.className = 'text-xs text-neutral-600 italic'; dmStats.textContent = 'Carregando…'; }
+    setBirthdayBadge(appt.customerBirthdate);
     loadHistory(id);
 
     // Auditoria
@@ -1823,15 +2088,85 @@ const clientData = {
     const mm = totalH % 60;
     const timeStr = `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
 
-    // Abre o form de agendamento manual
+    openExpressMenu(timeStr);
+  });
+
+  // ─── Menu de ação rápida (agendar / bloqueio expresso) ──────────────────────
+  const exModal   = document.getElementById('express-modal');
+  const exTimeEl  = document.getElementById('ex-time');
+  const exHint    = document.getElementById('ex-hint');
+  const exAgendar = document.getElementById('ex-agendar');
+  const exBlock30 = document.getElementById('ex-block-30');
+  const exBlock60 = document.getElementById('ex-block-60');
+  let exTimeStr = null;
+
+  // Barbeiro alvo do bloqueio expresso: o próprio (barber) ou o filtrado (admin)
+  function expressBarberId() {
+    return role === 'admin' ? filterBarberId : sessionBarberId;
+  }
+
+  function openExpressMenu(timeStr) {
+    exTimeStr = timeStr;
+    if (exTimeEl) exTimeEl.textContent = timeStr;
+    const canBlock = !!expressBarberId();
+    [exBlock30, exBlock60].forEach(b => { if (b) b.disabled = !canBlock; });
+    exHint?.classList.toggle('hidden', canBlock);
+    exModal?.classList.remove('hidden');
+  }
+  function closeExpressMenu() { exModal?.classList.add('hidden'); }
+  document.getElementById('ex-close')?.addEventListener('click', closeExpressMenu);
+  exModal?.addEventListener('click', (e) => { if (e.target === exModal) closeExpressMenu(); });
+
+  exAgendar?.addEventListener('click', () => {
+    closeExpressMenu();
     formBlock?.classList.add('hidden');
     formManual?.classList.remove('hidden');
     loadServices();
+    // Encaixe rápido: pré-seleciona o barbeiro quando já se sabe quem é
+    // (admin com filtro ativo; barbeiro comum nem tem o select)
+    const mBarber = document.getElementById('m-barber');
+    if (mBarber && role === 'admin' && filterBarberId) {
+      mBarber.value = String(filterBarberId);
+    }
     formManual?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     // Guarda preferência de horário pra pré-selecionar quando os slots carregarem
-    window.__preferredSlotTime = timeStr;
-    toast(`Selecione barbeiro e serviço para agendar às ${timeStr}`, 'info');
+    window.__preferredSlotTime = exTimeStr;
+    document.getElementById('m-service')?.focus();
+    toast(`Escolha o serviço para encaixar às ${exTimeStr}`, 'info');
   });
+
+  async function expressBlock(minutes, btn) {
+    const barberId = expressBarberId();
+    if (!barberId || !exTimeStr) return;
+    btn.disabled = true;
+    const startsAt = localTimeToUtcIso(date, exTimeStr);
+    const endsAt   = new Date(new Date(startsAt).getTime() + minutes * 60_000).toISOString();
+    const { ok, data } = await callApi('/api/admin/time-off', 'POST', {
+      barberId,
+      startsAt,
+      endsAt,
+      reason: 'Bloqueio rápido',
+    });
+    if (ok) {
+      location.reload();
+      return;
+    }
+    btn.disabled = false;
+    closeExpressMenu();
+    if (data.conflicts?.length) {
+      const lista = data.conflicts.map(c => `${c.timeLocal} — ${c.customerName}`).join(', ');
+      await showConfirm({
+        title:   'Já tem cliente nesse intervalo',
+        message: `${lista}. Cancele ou mova o agendamento antes de bloquear.`,
+        okLabel: 'Entendi',
+        danger:  false,
+      });
+    } else {
+      toast(data.error ?? 'Erro ao bloquear', 'error');
+    }
+  }
+  exBlock30?.addEventListener('click', () => expressBlock(30, exBlock30));
+  exBlock60?.addEventListener('click', () => expressBlock(60, exBlock60));
 
   // ─── Toggle forms ────────────────────────────────────────────────────────────
   const formManual = document.getElementById('form-manual');
@@ -2060,6 +2395,10 @@ const clientData = {
       grid.className = 'flex flex-wrap gap-2';
       const preferred = window.__preferredSlotTime;
       let preferredBtn = null;
+      // Casa com o slot mais próximo do horário clicado (até 30min de distância).
+      // Empate → prefere o slot que vem DEPOIS do clique, não antes.
+      const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+      let bestScore = Infinity;
 
       data.slots.forEach(slot => {
         const isoStr = typeof slot === 'string' ? slot : slot.utc;
@@ -2084,7 +2423,13 @@ const clientData = {
         });
         grid.appendChild(btn);
 
-        if (preferred && label === preferred) preferredBtn = btn;
+        if (preferred) {
+          const diff = toMin(label) - toMin(preferred);
+          if (Math.abs(diff) <= 30) {
+            const score = Math.abs(diff) * 2 + (diff >= 0 ? 0 : 1);
+            if (score < bestScore) { bestScore = score; preferredBtn = btn; }
+          }
+        }
       });
       slotsWrap.appendChild(grid);
 
@@ -2093,6 +2438,8 @@ const clientData = {
         preferredBtn.click();
         preferredBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         window.__preferredSlotTime = null;
+        // Próximo passo do encaixe: nome do cliente
+        document.getElementById('m-name')?.focus();
       }
     } catch {
       slotsWrap.innerHTML = '<span class="text-red-400">Erro ao carregar horários.</span>';

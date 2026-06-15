@@ -4,6 +4,8 @@ import { fromZonedTime } from 'date-fns-tz';
 import { and, eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { barbers, barberServices, services, workingHours } from '../db/schema.js';
+import { normalizePhone } from './phone.js';
+import { isComboEligibleSlug, applyComboDiscount, findComboProduct } from './combo.js';
 
 const TZ = 'America/Fortaleza';
 
@@ -26,8 +28,14 @@ const stmtInsert = sqlite.prepare(`
   INSERT INTO appointments
     (barber_id, service_id, customer_name, customer_phone, customer_birthdate,
      starts_at, ends_at, duration_minutes, price_cents,
-     manage_token, created_by, idempotency_key)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     manage_token, created_by, idempotency_key, notes)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+// Item da comanda criado já no agendamento (ex.: produto do Combo Boris).
+const stmtInsertItem = sqlite.prepare(`
+  INSERT INTO appointment_items (appointment_id, service_id, name, price_cents)
+  VALUES (?, ?, ?, ?)
 `);
 
 // Busca por idempotencyKey já usado (cliente clicou 2x e o 1º foi).
@@ -56,6 +64,12 @@ export interface BookParams {
   createdBy:         'customer' | 'barber';
   /** Idempotência: cliente passa chave única por tentativa pra evitar duplo booking. */
   idempotencyKey?:   string | null;
+  /**
+   * Combo Boris: quando presente, o serviço precisa ser elegível (Cabelo+Barba)
+   * e o produto vira um item da comanda. O desconto é aplicado no servidor —
+   * o cliente só escolhe o slug do produto, nunca o preço.
+   */
+  combo?:            { productSlug: string } | null;
 }
 
 export type BookResult =
@@ -65,8 +79,15 @@ export type BookResult =
   | { ok: false; httpStatus: number; error: string };
 
 export function bookAppointment(params: BookParams): BookResult {
-  const { barberId, serviceId, customerName, customerPhone, customerBirthdate, startsAt, createdBy } = params;
+  const { barberId, serviceId, customerName, customerBirthdate, startsAt, createdBy } = params;
   const idempotencyKey = params.idempotencyKey ?? null;
+
+  // Telefone é armazenado SEMPRE normalizado (só dígitos, 10-11). Ponto único
+  // de escrita — cobre booking público e manual do admin.
+  const customerPhone = normalizePhone(params.customerPhone);
+  if (!customerPhone) {
+    return { ok: false, httpStatus: 400, error: 'Telefone inválido — informe DDD + número' };
+  }
 
   // Curto-circuito: se já existe agendamento com essa chave, retorna ele em vez de criar.
   if (idempotencyKey) {
@@ -98,6 +119,7 @@ export function bookAppointment(params: BookParams): BookResult {
       priceCents:      services.priceCents,
       barberName:      barbers.name,
       serviceName:     services.name,
+      serviceSlug:     services.slug,
     })
     .from(barberServices)
     .innerJoin(services, eq(services.id, barberServices.serviceId))
@@ -115,7 +137,27 @@ export function bookAppointment(params: BookParams): BookResult {
     return { ok: false, httpStatus: 404, error: 'Barbeiro ou serviço não encontrado' };
   }
 
-  const { durationMinutes, priceCents, barberName, serviceName } = bsRows[0];
+  const { durationMinutes, priceCents, barberName, serviceName, serviceSlug } = bsRows[0];
+
+  // Combo Boris: valida elegibilidade + produto e calcula preços com desconto
+  // no servidor (cliente nunca envia valor). O produto vira item da comanda.
+  const combo = params.combo ?? null;
+  let finalPriceCents = priceCents;
+  let comboItem: { name: string; priceCents: number } | null = null;
+  let notes: string | null = null;
+  if (combo) {
+    if (!isComboEligibleSlug(serviceSlug)) {
+      return { ok: false, httpStatus: 400, error: 'Esse serviço não faz parte do Combo Boris' };
+    }
+    const product = findComboProduct(combo.productSlug);
+    if (!product) {
+      return { ok: false, httpStatus: 400, error: 'Produto do combo inválido' };
+    }
+    finalPriceCents = applyComboDiscount(priceCents);
+    comboItem = { name: product.name, priceCents: applyComboDiscount(product.priceCents) };
+    notes = `🎁 Combo Boris — produto para retirar na barbearia: ${product.name}. 10% OFF aplicado (serviço + produto).`;
+  }
+
   const endsAt  = addMinutes(startsAt, durationMinutes);
   const dateStr = startsAt.toISOString().slice(0, 10);
   const dow     = weekdayOf(dateStr);
@@ -130,10 +172,15 @@ export function bookAppointment(params: BookParams): BookResult {
     return { ok: false, httpStatus: 400, error: 'Barbeiro não trabalha nesse dia' };
   }
 
-  const open  = fromZonedTime(`${dateStr}T${whRows[0].startTime}:00`, TZ);
-  const close = fromZonedTime(`${dateStr}T${whRows[0].endTime}:00`,   TZ);
+  // O slot precisa caber inteiro dentro de ALGUMA janela de expediente do dia.
+  // (O schema permite mais de uma janela por dia — ex: turno manhã + tarde.)
+  const fitsAnyWindow = whRows.some(wh => {
+    const open  = fromZonedTime(`${dateStr}T${wh.startTime}:00`, TZ);
+    const close = fromZonedTime(`${dateStr}T${wh.endTime}:00`,   TZ);
+    return startsAt >= open && endsAt <= close;
+  });
 
-  if (startsAt < open || endsAt > close) {
+  if (!fitsAnyWindow) {
     return { ok: false, httpStatus: 400, error: 'Horário fora do expediente' };
   }
 
@@ -158,9 +205,15 @@ export function bookAppointment(params: BookParams): BookResult {
 
     const result = stmtInsert.run(
       barberId, serviceId, customerName, customerPhone, customerBirthdate,
-      startsAtIso, endsAtIso, durationMinutes, priceCents, manageToken, createdBy,
-      idempotencyKey
+      startsAtIso, endsAtIso, durationMinutes, finalPriceCents, manageToken, createdBy,
+      idempotencyKey, notes
     );
+
+    // Produto do combo entra como item da comanda na MESMA transação.
+    if (comboItem) {
+      stmtInsertItem.run(result.lastInsertRowid, null, comboItem.name, comboItem.priceCents);
+    }
+
     stmtCommit.run();
 
     return {
@@ -171,7 +224,7 @@ export function bookAppointment(params: BookParams): BookResult {
       startsAt: startsAtIso,
       endsAt: endsAtIso,
       durationMinutes,
-      priceCents,
+      priceCents: finalPriceCents,
       customerName,
       barberName,
       serviceName,

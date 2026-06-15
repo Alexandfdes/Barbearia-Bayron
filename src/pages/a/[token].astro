@@ -3,7 +3,7 @@ export const prerender = false;
 
 import Layout from '../../layouts/Layout.astro';
 import { db } from '../../db/index.js';
-import { appointments, barbers, services } from '../../db/schema.js';
+import { appointments, appointmentItems, barbers, services } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { formatInTimeZone } from 'date-fns-tz';
 import { ptBR } from 'date-fns/locale';
@@ -46,7 +46,18 @@ const timeLocal = formatInTimeZone(startsAt, TZ, 'HH:mm');
 const weekdayRaw = formatInTimeZone(startsAt, TZ, 'EEEE', { locale: ptBR });
 const weekday    = weekdayRaw.charAt(0).toUpperCase() + weekdayRaw.slice(1);
 
+// Itens da comanda criados no agendamento (ex.: produto do Combo Boris a retirar).
+const items = db
+  .select({ name: appointmentItems.name, priceCents: appointmentItems.priceCents })
+  .from(appointmentItems)
+  .where(eq(appointmentItems.appointmentId, appt.id))
+  .all();
+const itemsTotalCents = items.reduce((sum, it) => sum + it.priceCents, 0);
+const totalCents = appt.priceCents + itemsTotalCents;
+
 const price       = `R$ ${(appt.priceCents / 100).toFixed(0)}`;
+const totalDisplay = `R$ ${(totalCents / 100).toFixed(0)}`;
+const fmtCents    = (c: number) => `R$ ${(c / 100).toFixed(0)}`;
 const isConfirmed = appt.status === 'confirmed';
 const isCancelled = appt.status === 'cancelled';
 const isCompleted = appt.status === 'completed';
@@ -152,9 +163,20 @@ const apptDateStr   = formatInTimeZone(startsAt, TZ, 'yyyy-MM-dd');
             <p class="text-xs text-neutral-500 mt-1">{appt.durationMinutes} min</p>
           </div>
         </div>
+        {items.length > 0 && (
+          <div class="px-5 py-4 border-b border-white/5">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest mb-2">Para retirar na barbearia</p>
+            {items.map((it) => (
+              <div class="flex items-center justify-between text-sm py-0.5">
+                <span class="text-neutral-200">{it.name}</span>
+                <span class="text-neutral-300">{fmtCents(it.priceCents)}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <div class="px-5 py-4 flex items-center justify-between">
-          <p class="text-xs text-neutral-500 uppercase tracking-widest">Valor</p>
-          <p class="text-teal-light font-bold text-xl">{price}</p>
+          <p class="text-xs text-neutral-500 uppercase tracking-widest">{items.length > 0 ? 'Total' : 'Valor'}</p>
+          <p class="text-teal-light font-bold text-xl">{items.length > 0 ? totalDisplay : price}</p>
         </div>
       </div>
 

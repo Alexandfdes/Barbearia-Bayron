@@ -29,11 +29,7 @@ const stmtList = sqlite.prepare(`
   FROM appointments a
   INNER JOIN barbers  b ON b.id = a.barber_id
   INNER JOIN services s ON s.id = a.service_id
-  WHERE substr(
-    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-      a.customer_phone, ' ', ''), '(', ''), ')', ''), '-', ''), '+', ''), '.', ''),
-    -11
-  ) = ?
+  WHERE a.customer_phone = ?
   AND a.customer_birthdate = ?
   ORDER BY a.starts_at DESC
 `);

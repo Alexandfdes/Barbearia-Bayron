@@ -2,10 +2,10 @@ export const prerender = false;
 
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
-import { eq, isNull, or } from 'drizzle-orm';
+import { and, eq, gt, isNull, lt, or } from 'drizzle-orm';
 import { formatInTimeZone } from 'date-fns-tz';
 import { db } from '../../../../db/index.js';
-import { barbers, timeOff } from '../../../../db/schema.js';
+import { appointments, barbers, timeOff } from '../../../../db/schema.js';
 import { json } from '../../../../lib/api.js';
 import { getSession } from '../../../../lib/session.js';
 
@@ -73,10 +73,50 @@ export const POST: APIRoute = async ({ request }) => {
     return json({ error: 'Horário de início deve ser antes do fim' }, 400);
   }
 
+  // Rejeita bloqueio inteiramente no passado. Intervalo que ainda está em curso
+  // (começou mas não terminou) é permitido — ex: bloquear o almoço já começado.
+  if (new Date(endsAt) <= new Date()) {
+    return json({ error: 'Esse intervalo já passou' }, 400);
+  }
+
+  const startsIso = new Date(startsAt).toISOString();
+  const endsIso   = new Date(endsAt).toISOString();
+
+  // Não permite bloquear em cima de agendamento confirmado.
+  // barberId null (feriado p/ todos) conflita com qualquer barbeiro.
+  const overlap = and(
+    eq(appointments.status, 'confirmed'),
+    lt(appointments.startsAt, endsIso),
+    gt(appointments.endsAt, startsIso),
+  );
+  const conflictRows = db
+    .select({
+      customerName: appointments.customerName,
+      startsAt:     appointments.startsAt,
+    })
+    .from(appointments)
+    .where(
+      effectiveBarberId !== null
+        ? and(overlap, eq(appointments.barberId, effectiveBarberId))
+        : overlap
+    )
+    .orderBy(appointments.startsAt)
+    .all();
+
+  if (conflictRows.length > 0) {
+    return json({
+      error: 'Há cliente agendado nesse intervalo',
+      conflicts: conflictRows.map(c => ({
+        customerName: c.customerName,
+        timeLocal:    formatInTimeZone(new Date(c.startsAt), TZ, 'HH:mm'),
+      })),
+    }, 409);
+  }
+
   const result = db.insert(timeOff).values({
     barberId:  effectiveBarberId,
-    startsAt:  new Date(startsAt).toISOString(),
-    endsAt:    new Date(endsAt).toISOString(),
+    startsAt:  startsIso,
+    endsAt:    endsIso,
     reason:    reason ?? null,
     createdBy: session.barberId,
   }).run();

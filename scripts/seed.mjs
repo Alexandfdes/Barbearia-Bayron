@@ -3,10 +3,11 @@
  * Idempotente: não insere se já existir dado.
  *
  * Uso: node scripts/seed.mjs
- * Vars de ambiente:
- *   DATABASE_PATH          (default: ./data/appointments.db)
- *   ADMIN_INITIAL_PASSWORD (default: trocar depois do primeiro login)
- *   BARBER_INITIAL_PASSWORD
+ * Vars de ambiente (obrigatórias):
+ *   ADMIN_INITIAL_PASSWORD  — senha inicial do admin (trocar após o primeiro login)
+ *   BARBER_INITIAL_PASSWORD — senha inicial dos barbeiros
+ * Vars de ambiente (opcionais):
+ *   DATABASE_PATH           (default: ./data/appointments.db)
  */
 
 import { mkdirSync } from 'node:fs';
@@ -21,8 +22,28 @@ import bcrypt from 'bcryptjs';
 const __dirname = pDirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DATABASE_PATH ?? './data/appointments.db';
 const MIGRATIONS_FOLDER = resolve(__dirname, '..', 'drizzle');
-const ADMIN_PASSWORD = process.env.ADMIN_INITIAL_PASSWORD ?? 'bayron@2025';
-const BARBER_PASSWORD = process.env.BARBER_INITIAL_PASSWORD ?? 'barber@2025';
+const ADMIN_PASSWORD = process.env.ADMIN_INITIAL_PASSWORD;
+const BARBER_PASSWORD = process.env.BARBER_INITIAL_PASSWORD;
+
+// Senhas são obrigatórias via env — sem fallback hardcoded.
+const PLACEHOLDERS = ['bayron@2025', 'barber@2025', 'changeme', 'password', 'senha'];
+for (const [name, value] of [
+  ['ADMIN_INITIAL_PASSWORD', ADMIN_PASSWORD],
+  ['BARBER_INITIAL_PASSWORD', BARBER_PASSWORD],
+]) {
+  if (!value) {
+    console.error(`ERRO: variável de ambiente ${name} não definida. Defina-a antes de rodar o seed.`);
+    process.exit(1);
+  }
+  if (value.length < 8) {
+    console.error(`ERRO: ${name} muito curta (mínimo 8 caracteres).`);
+    process.exit(1);
+  }
+  if (PLACEHOLDERS.includes(value.toLowerCase())) {
+    console.error(`ERRO: ${name} usa um valor placeholder conhecido. Escolha uma senha real.`);
+    process.exit(1);
+  }
+}
 
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
@@ -135,5 +156,5 @@ console.log(`✓ ${whCount} working_hours inseridos`);
 
 sqlite.close();
 console.log('\nSeed concluído com sucesso!');
-console.log(`Senhas — Admin (Bayron): ${ADMIN_PASSWORD} | Barbeiros: ${BARBER_PASSWORD}`);
+console.log('Senhas definidas a partir de ADMIN_INITIAL_PASSWORD e BARBER_INITIAL_PASSWORD (não exibidas por segurança).');
 console.log('Altere as senhas após o primeiro login.');

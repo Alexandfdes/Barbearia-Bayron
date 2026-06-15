@@ -12,17 +12,11 @@ const bodySchema = z.object({
   birthdate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data de nascimento inválida'),
 });
 
-// Conta agendamentos cujo telefone (normalizado pelos últimos 11 dígitos) bate
-// E que tenham customer_birthdate cadastrada igual à informada. Sem birthdate na
-// linha → ela não conta (bloqueia clientes antigos pré-mudança).
+// customer_phone é armazenado normalizado (migration 0004) — comparação direta
+// usa o índice appt_phone_idx.
 const stmtCheckMatch = sqlite.prepare(`
   SELECT COUNT(*) AS c FROM appointments
-  WHERE substr(
-    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-      customer_phone, ' ', ''), '(', ''), ')', ''), '-', ''), '+', ''), '.', ''),
-    -11
-  ) = ?
-  AND customer_birthdate = ?
+  WHERE customer_phone = ? AND customer_birthdate = ?
 `);
 
 // Conta agendamentos do telefone independente de birthdate — usado pra distinguir
@@ -32,11 +26,7 @@ const stmtCheckAnyPhone = sqlite.prepare(`
     COUNT(*) AS total,
     SUM(CASE WHEN customer_birthdate IS NULL THEN 1 ELSE 0 END) AS without_birthdate
   FROM appointments
-  WHERE substr(
-    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-      customer_phone, ' ', ''), '(', ''), ')', ''), '-', ''), '+', ''), '.', ''),
-    -11
-  ) = ?
+  WHERE customer_phone = ?
 `);
 
 export const POST: APIRoute = async ({ request }) => {

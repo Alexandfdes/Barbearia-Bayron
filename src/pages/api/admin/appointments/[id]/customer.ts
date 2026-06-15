@@ -5,18 +5,13 @@ import { z } from 'zod';
 import { sqlite } from '../../../../../db/index.js';
 import { json } from '../../../../../lib/api.js';
 import { getSession } from '../../../../../lib/session.js';
+import { normalizePhone } from '../../../../../lib/phone.js';
 
 const bodySchema = z.object({
   customerName:      z.string().min(2).max(100),
   customerPhone:     z.string().min(8).max(25),
   customerBirthdate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
 });
-
-// Helper: extrai os últimos 11 dígitos do telefone (mesma normalização do login)
-function lastDigits(phone: string, n = 11): string {
-  const d = (phone ?? '').replace(/\D/g, '');
-  return d.length > n ? d.slice(-n) : d;
-}
 
 // Plausibilidade da data (5–100 anos atrás)
 function isPlausibleBirthdate(iso: string | null): boolean {
@@ -34,7 +29,7 @@ const stmtGet = sqlite.prepare(`
   SELECT id, customer_phone, barber_id FROM appointments WHERE id = ?
 `);
 
-// Atualiza TODOS os appointments cujo telefone normalizado bate com o original
+// Atualiza TODOS os appointments do mesmo telefone (coluna já normalizada)
 const stmtPropagate = sqlite.prepare(`
   UPDATE appointments
      SET customer_name = ?,
@@ -42,11 +37,7 @@ const stmtPropagate = sqlite.prepare(`
          customer_birthdate = ?,
          last_modified_by_id = ?,
          last_modified_at = ?
-   WHERE substr(
-     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-       customer_phone, ' ', ''), '(', ''), ')', ''), '-', ''), '+', ''), '.', ''),
-     -11
-   ) = ?
+   WHERE customer_phone = ?
 `);
 
 // Atualiza só esse appointment (fallback)
@@ -82,8 +73,9 @@ export const PATCH: APIRoute = async ({ params, request }) => {
     return json({ error: 'Sem permissão' }, 403);
   }
 
-  const origPhoneKey = lastDigits(appt.customer_phone);
-  const newPhone     = parsed.data.customerPhone.trim();
+  const origPhoneKey = normalizePhone(appt.customer_phone);
+  const newPhone     = normalizePhone(parsed.data.customerPhone);
+  if (!newPhone) return json({ error: 'Telefone inválido — informe DDD + número' }, 400);
 
   const nowIso = new Date().toISOString();
 

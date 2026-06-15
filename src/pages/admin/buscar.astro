@@ -97,6 +97,14 @@ if (!barberRow) return Astro.redirect('/admin/login');
       .replace(/'/g, '&#39;');
   }
 
+  // customer_phone vem normalizado do banco (só dígitos) — formata pra exibição
+  function formatPhone(digits: string): string {
+    const d = (digits ?? '').replace(/\D/g, '');
+    if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+    if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return digits;
+  }
+
   function renderResults(results: Array<Record<string, unknown>>) {
     if (results.length === 0) {
       resultsEl!.innerHTML = `
@@ -117,7 +125,7 @@ if (!barberRow) return Astro.redirect('/admin/login');
           <div class="flex items-start justify-between gap-4">
             <div class="min-w-0">
               <p class="text-neutral-100 font-medium truncate">${escapeHtml(String(r.customerName))}</p>
-              <p class="text-neutral-500 text-sm">${escapeHtml(String(r.customerPhone))}</p>
+              <p class="text-neutral-500 text-sm">${escapeHtml(formatPhone(String(r.customerPhone)))}</p>
               <p class="text-neutral-400 text-sm mt-2">
                 ${escapeHtml(String(r.serviceName))} · ${escapeHtml(String(r.barberName))}
               </p>

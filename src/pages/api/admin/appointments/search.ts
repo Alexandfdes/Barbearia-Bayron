@@ -8,10 +8,7 @@ import { sqlite } from '../../../../db/index.js';
 
 const TZ = 'America/Fortaleza';
 
-// Busca por dígitos do telefone: normaliza o customer_phone armazenado
-// removendo espaços, parênteses, hífens, + e pontos antes do LIKE.
-// Cobre os formatos comuns digitados pelo cliente. Se algum telefone
-// tiver caractere raro (ex: separador inesperado), pode não bater.
+// customer_phone é armazenado normalizado (só dígitos) — LIKE direto na coluna.
 const stmtSearch = sqlite.prepare(`
   SELECT
     a.id              AS id,
@@ -29,8 +26,7 @@ const stmtSearch = sqlite.prepare(`
   FROM appointments a
   INNER JOIN barbers  b ON b.id = a.barber_id
   INNER JOIN services s ON s.id = a.service_id
-  WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(a.customer_phone,
-           ' ',  ''), '(', ''), ')', ''), '-', ''), '+', ''), '.', '') LIKE ?
+  WHERE a.customer_phone LIKE ?
   ORDER BY a.starts_at DESC
   LIMIT 50
 `);

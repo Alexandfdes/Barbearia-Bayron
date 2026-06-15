@@ -29,6 +29,13 @@
       "when": 1780199999000,
       "tag": "0003_add_appointment_items",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1781137000000,
+      "tag": "0004_normalize_customer_phone",
+      "breakpoints": true
     }
   ]
 }

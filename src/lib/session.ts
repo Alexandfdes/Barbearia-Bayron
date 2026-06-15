@@ -10,9 +10,15 @@ export interface SessionData {
 
 function secret(): string {
   const s = process.env.SESSION_SECRET;
-  if (s) return s;
-  if (process.env.NODE_ENV === 'production') throw new Error('SESSION_SECRET não definido');
-  return 'dev-secret-must-be-at-least-32-chars!!';
+  if (!s) {
+    throw new Error(
+      'SESSION_SECRET não definido. Gere um com: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+    );
+  }
+  if (s.length < 32) {
+    throw new Error('SESSION_SECRET muito curto: iron-session exige no mínimo 32 caracteres.');
+  }
+  return s;
 }
 
 export async function getSession(request: Request): Promise<SessionData | null> {

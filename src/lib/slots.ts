@@ -1,8 +1,8 @@
 import { db } from '../db/index.js';
 import { barberServices, workingHours, appointments, timeOff } from '../db/schema.js';
 import { eq, and, or, isNull, gte, lt, gt, ne } from 'drizzle-orm';
-import { addMinutes } from 'date-fns';
 import { fromZonedTime } from 'date-fns-tz';
+import { computeAvailableSlots } from './slotsCore.js';
 
 const TZ = 'America/Fortaleza';
 
@@ -17,19 +17,13 @@ function weekdayOf(dateStr: string): number {
   return new Date(Date.UTC(y, m - 1, d, 12)).getDay();
 }
 
-/** Verifica se os intervalos [aStart, aEnd) e [bStart, bEnd) se sobrepõem */
-function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
-  return aStart < bEnd && aEnd > bStart;
-}
-
 /**
  * Retorna os horários disponíveis para um barbeiro/serviço/data.
- * @param barberId            ID do barbeiro
- * @param serviceId           ID do serviço
- * @param dateStr             Data no formato "YYYY-MM-DD" (fuso horário de Fortaleza)
- * @param excludeAppointmentId Se informado, ignora esse appointment no cálculo de conflitos
- *                            (usado em reagendamentos: o cliente não deve conflitar consigo mesmo).
- * @returns                   Array de Date (UTC) ordenado e sem duplicatas
+ * Faz a leitura do banco e delega o cálculo para computeAvailableSlots (puro).
+ * @param barberId             ID do barbeiro
+ * @param serviceId            ID do serviço
+ * @param dateStr              Data "YYYY-MM-DD" (fuso de Fortaleza)
+ * @param excludeAppointmentId Ignora esse appointment no cálculo (reagendamento)
  */
 export function getAvailableSlots(
   barberId: number,
@@ -66,8 +60,26 @@ export function getAvailableSlots(
 
   if (whRows.length === 0) return [];
 
-  const open  = localToUtc(dateStr, whRows[0].startTime);
-  const close = localToUtc(dateStr, whRows[0].endTime);
+  // O schema permite mais de uma janela de expediente por dia (ex: manhã + tarde).
+  // Calcula slots por janela e junta tudo ordenado.
+  const allSlots: Date[] = [];
+  for (const wh of whRows) {
+    allSlots.push(...slotsForWindow(barberId, dateStr, wh.startTime, wh.endTime, duration, excludeAppointmentId));
+  }
+  return [...new Map(allSlots.map(s => [s.getTime(), s])).values()]
+    .sort((a, b) => a.getTime() - b.getTime());
+}
+
+function slotsForWindow(
+  barberId: number,
+  dateStr: string,
+  startTime: string,
+  endTime: string,
+  duration: number,
+  excludeAppointmentId?: number
+): Date[] {
+  const open  = localToUtc(dateStr, startTime);
+  const close = localToUtc(dateStr, endTime);
   const openIso  = open.toISOString();
   const closeIso = close.toISOString();
 
@@ -112,47 +124,5 @@ export function getAvailableSlots(
     .all()
     .map(r => ({ startsAt: new Date(r.startsAt), endsAt: new Date(r.endsAt) }));
 
-  const candidates: Date[] = [];
-  let cursor = new Date(open);
-  while (addMinutes(cursor, duration) <= close) {
-    candidates.push(new Date(cursor));
-    cursor = addMinutes(cursor, 30);
-  }
-  for (const appt of appts) {
-    if (addMinutes(appt.endsAt, duration) <= close) {
-      candidates.push(new Date(appt.endsAt));
-    }
-  }
-
-  const now = new Date();
-  const valid: Date[] = [];
-
-  for (const slot of candidates) {
-    if (slot < now) continue;
-    const slotEnd = addMinutes(slot, duration);
-    let conflict = false;
-
-    for (const appt of appts) {
-      if (overlaps(slot, slotEnd, appt.startsAt, appt.endsAt)) { conflict = true; break; }
-    }
-    if (conflict) continue;
-
-    for (const off of offs) {
-      if (overlaps(slot, slotEnd, off.startsAt, off.endsAt)) { conflict = true; break; }
-    }
-    if (conflict) continue;
-
-    valid.push(slot);
-  }
-
-  const seen = new Set<number>();
-  const result: Date[] = [];
-  for (const slot of valid.sort((a, b) => a.getTime() - b.getTime())) {
-    if (!seen.has(slot.getTime())) {
-      seen.add(slot.getTime());
-      result.push(slot);
-    }
-  }
-
-  return result;
+  return computeAvailableSlots({ open, close, durationMinutes: duration, appts, offs });
 }

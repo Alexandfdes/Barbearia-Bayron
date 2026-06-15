@@ -4,27 +4,33 @@ export const prerender = false;
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import { getSession } from '../../lib/session.js';
 import { db } from '../../db/index.js';
-import { appointments, appointmentItems, barbers, services } from '../../db/schema.js';
-import { and, gte, lt, eq } from 'drizzle-orm';
+import { appointments, appointmentItems, barbers, services, workingHours, timeOff } from '../../db/schema.js';
+import { and, gte, lt, eq, ne, or, isNull } from 'drizzle-orm';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+import { computeOccupancy } from '../../lib/occupancy.js';
 
 const TZ = 'America/Fortaleza';
-const START_HOUR = 8;
+const START_HOUR = 9;
 const END_HOUR = 19;
 
 const session = await getSession(Astro.request);
 if (!session) return Astro.redirect('/admin/login');
-if (session.role !== 'admin') return Astro.redirect('/admin/servicos');
+
+// Admin vê o negócio inteiro; barbeiro vê só os próprios dados.
+const isAdmin = session.role === 'admin';
+const viewBarberId: number | null = isAdmin ? null : session.barberId;
 
 const barberRow = db.select({ id: barbers.id, name: barbers.name })
   .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
 if (!barberRow) return Astro.redirect('/admin/login');
 
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const DIAS_SEMANA = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
 
 // Mês selecionado (YYYY-MM). Default: mês atual no fuso local.
 const nowUtc = new Date();
 const thisMonth = formatInTimeZone(nowUtc, TZ, 'yyyy-MM');
+const todayLocal = formatInTimeZone(nowUtc, TZ, 'yyyy-MM-dd');
 const mesParam = Astro.url.searchParams.get('mes');
 const mes = mesParam && /^\d{4}-\d{2}$/.test(mesParam) ? mesParam : thisMonth;
 const [yy, mm] = mes.split('-').map(Number);
@@ -39,112 +45,237 @@ const prevMes = shiftMonth(yy, mm, -1);
 const nextMes = shiftMonth(yy, mm, 1);
 const nextMesLabel = (() => { const [a, b] = nextMes.split('-').map(Number); return `${MESES[b - 1]} ${a}`; })();
 const isCurrentOrFuture = mes >= thisMonth;
+const isCurrent = mes === thisMonth;
 
-// Janela do mês em UTC (00:00 local do 1º dia até 00:00 local do mês seguinte)
-const startUtc = fromZonedTime(`${mes}-01T00:00:00`, TZ).toISOString();
-const endUtc   = fromZonedTime(`${shiftMonth(yy, mm, 1)}-01T00:00:00`, TZ).toISOString();
+function monthRange(ym: string) {
+  const [y, m] = ym.split('-').map(Number);
+  return {
+    start: fromZonedTime(`${ym}-01T00:00:00`, TZ).toISOString(),
+    end:   fromZonedTime(`${shiftMonth(y, m, 1)}-01T00:00:00`, TZ).toISOString(),
+  };
+}
+function weekdayOf(dateStr: string): number {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay();
+}
 
-const rows = db
-  .select({
-    status:     appointments.status,
-    startsAt:   appointments.startsAt,
-    endsAt:     appointments.endsAt,
-    priceCents: appointments.priceCents,
-    barberName: barbers.name,
-    serviceName: services.name,
-  })
+// Filtro por barbeiro (undefined = todos, pra drizzle ignorar a condição)
+const apptBarberCond = viewBarberId != null ? eq(appointments.barberId, viewBarberId) : undefined;
+
+interface MonthMetrics {
+  realizadoCents: number; previstoCents: number; abertoCents: number; perdidoCents: number;
+  completedCount: number; noShowCount: number; abertoCount: number;
+  porBarbeiro: Map<string, number>;
+  porServico: Map<string, { count: number; cents: number }>;
+  porHora: number[];
+  monthPhones: Set<string>;
+  occAppts: { barberId: number; startsAt: string; endsAt: string }[];
+  noShowRate: number;
+  ticketCents: number;
+}
+
+function loadMonth(ym: string): MonthMetrics {
+  const { start, end } = monthRange(ym);
+
+  const rows = db
+    .select({
+      status: appointments.status,
+      startsAt: appointments.startsAt,
+      endsAt: appointments.endsAt,
+      priceCents: appointments.priceCents,
+      barberId: appointments.barberId,
+      barberName: barbers.name,
+      serviceName: services.name,
+      customerPhone: appointments.customerPhone,
+    })
+    .from(appointments)
+    .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
+    .innerJoin(services, eq(services.id, appointments.serviceId))
+    .where(and(gte(appointments.startsAt, start), lt(appointments.startsAt, end), apptBarberCond))
+    .all();
+
+  let realizadoCents = 0, previstoCents = 0, abertoCents = 0, perdidoCents = 0;
+  let completedCount = 0, noShowCount = 0, abertoCount = 0;
+  const porBarbeiro = new Map<string, number>();
+  const porServico  = new Map<string, { count: number; cents: number }>();
+  const porHora: number[] = new Array(END_HOUR - START_HOUR + 1).fill(0);
+  const monthPhones = new Set<string>();
+  const occAppts: { barberId: number; startsAt: string; endsAt: string }[] = [];
+
+  const bumpHora = (startsAt: string) => {
+    const h = Number(formatInTimeZone(new Date(startsAt), TZ, 'H'));
+    if (h >= START_HOUR && h <= END_HOUR) porHora[h - START_HOUR]++;
+  };
+
+  for (const r of rows) {
+    if (r.status !== 'cancelled') {
+      monthPhones.add(r.customerPhone);
+      occAppts.push({ barberId: r.barberId, startsAt: r.startsAt, endsAt: r.endsAt });
+    }
+    if (r.status === 'completed') {
+      realizadoCents += r.priceCents;
+      completedCount++;
+      porBarbeiro.set(r.barberName, (porBarbeiro.get(r.barberName) ?? 0) + r.priceCents);
+      const s = porServico.get(r.serviceName) ?? { count: 0, cents: 0 };
+      s.count++; s.cents += r.priceCents;
+      porServico.set(r.serviceName, s);
+      bumpHora(r.startsAt);
+    } else if (r.status === 'confirmed') {
+      if (new Date(r.endsAt) > nowUtc) previstoCents += r.priceCents;
+      else { abertoCents += r.priceCents; abertoCount++; }
+      bumpHora(r.startsAt);
+    } else if (r.status === 'no_show') {
+      perdidoCents += r.priceCents;
+      noShowCount++;
+    }
+  }
+
+  // Extras da comanda, só de concluídos
+  const itemRows = db
+    .select({ name: appointmentItems.name, priceCents: appointmentItems.priceCents, barberName: barbers.name })
+    .from(appointmentItems)
+    .innerJoin(appointments, eq(appointments.id, appointmentItems.appointmentId))
+    .innerJoin(barbers, eq(barbers.id, appointments.barberId))
+    .where(and(gte(appointments.startsAt, start), lt(appointments.startsAt, end), eq(appointments.status, 'completed'), apptBarberCond))
+    .all();
+
+  for (const it of itemRows) {
+    realizadoCents += it.priceCents;
+    porBarbeiro.set(it.barberName, (porBarbeiro.get(it.barberName) ?? 0) + it.priceCents);
+    const s = porServico.get(it.name) ?? { count: 0, cents: 0 };
+    s.count++; s.cents += it.priceCents;
+    porServico.set(it.name, s);
+  }
+
+  const fechados = completedCount + noShowCount;
+  const noShowRate = fechados ? Math.round((noShowCount / fechados) * 1000) / 10 : 0;
+  const ticketCents = completedCount ? Math.round(realizadoCents / completedCount) : 0;
+
+  return { realizadoCents, previstoCents, abertoCents, perdidoCents, completedCount, noShowCount,
+    abertoCount, porBarbeiro, porServico, porHora, monthPhones, occAppts, noShowRate, ticketCents };
+}
+
+const cur  = loadMonth(mes);
+const prev = loadMonth(prevMes);
+
+// Clientes novos vs recorrentes (chave = telefone normalizado)
+const { start: curStart, end: curEnd } = monthRange(mes);
+const priorRows = db
+  .select({ phone: appointments.customerPhone })
   .from(appointments)
-  .innerJoin(barbers,  eq(barbers.id,  appointments.barberId))
-  .innerJoin(services, eq(services.id, appointments.serviceId))
-  .where(and(gte(appointments.startsAt, startUtc), lt(appointments.startsAt, endUtc)))
+  .where(and(lt(appointments.startsAt, curStart), ne(appointments.status, 'cancelled'), apptBarberCond))
+  .all();
+const priorSet = new Set(priorRows.map(r => r.phone));
+let novosCount = 0, recorrentesCount = 0;
+for (const p of cur.monthPhones) (priorSet.has(p) ? recorrentesCount++ : novosCount++);
+const clientesUnicos = cur.monthPhones.size;
+const recorrentesPct = clientesUnicos ? Math.round((recorrentesCount / clientesUnicos) * 100) : 0;
+
+// Ocupação e faixa ociosa (reaproveita occupancy.ts)
+const whRows = db
+  .select({ barberId: workingHours.barberId, weekday: workingHours.weekday, startTime: workingHours.startTime, endTime: workingHours.endTime })
+  .from(workingHours)
+  .where(viewBarberId != null ? eq(workingHours.barberId, viewBarberId) : undefined)
   .all();
 
-// ── Agregação (em JS, com fuso correto para os horários) ──────────────────────
-let realizadoCents = 0, previstoCents = 0, abertoCents = 0, perdidoCents = 0;
-let completedCount = 0, noShowCount = 0, abertoCount = 0;
-
-const porBarbeiro = new Map<string, number>();
-const porServico  = new Map<string, { count: number; cents: number }>();
-const porHora: number[] = new Array(END_HOUR - START_HOUR + 1).fill(0);
-
-function bumpHora(startsAt: string) {
-  const h = Number(formatInTimeZone(new Date(startsAt), TZ, 'H'));
-  if (h >= START_HOUR && h <= END_HOUR) porHora[h - START_HOUR]++;
-}
-
-for (const r of rows) {
-  if (r.status === 'completed') {
-    realizadoCents += r.priceCents;
-    completedCount++;
-    porBarbeiro.set(r.barberName, (porBarbeiro.get(r.barberName) ?? 0) + r.priceCents);
-    const s = porServico.get(r.serviceName) ?? { count: 0, cents: 0 };
-    s.count++; s.cents += r.priceCents;
-    porServico.set(r.serviceName, s);
-    bumpHora(r.startsAt);
-  } else if (r.status === 'confirmed') {
-    if (new Date(r.endsAt) > nowUtc) {
-      previstoCents += r.priceCents;   // ainda vai acontecer
-    } else {
-      abertoCents += r.priceCents;     // passou e ninguém fechou
-      abertoCount++;
-    }
-    bumpHora(r.startsAt);              // ocupa a cadeira de qualquer forma
-  } else if (r.status === 'no_show') {
-    perdidoCents += r.priceCents;
-    noShowCount++;
-  }
-  // 'cancelled' não entra em receita nem em no-show
-}
-
-// Extras da comanda (itens cobrados além do serviço agendado), só de concluídos
-const itemRows = db
-  .select({ name: appointmentItems.name, priceCents: appointmentItems.priceCents, barberName: barbers.name })
-  .from(appointmentItems)
-  .innerJoin(appointments, eq(appointments.id, appointmentItems.appointmentId))
-  .innerJoin(barbers, eq(barbers.id, appointments.barberId))
+const timeOffRows = db
+  .select({ barberId: timeOff.barberId, startsAt: timeOff.startsAt, endsAt: timeOff.endsAt })
+  .from(timeOff)
   .where(and(
-    gte(appointments.startsAt, startUtc),
-    lt(appointments.startsAt, endUtc),
-    eq(appointments.status, 'completed'),
+    lt(timeOff.startsAt, curEnd),
+    gte(timeOff.endsAt, curStart),
+    viewBarberId != null ? or(isNull(timeOff.barberId), eq(timeOff.barberId, viewBarberId)) : undefined,
   ))
   .all();
 
-for (const it of itemRows) {
-  realizadoCents += it.priceCents;
-  porBarbeiro.set(it.barberName, (porBarbeiro.get(it.barberName) ?? 0) + it.priceCents);
-  const s = porServico.get(it.name) ?? { count: 0, cents: 0 };
-  s.count++; s.cents += it.priceCents;
-  porServico.set(it.name, s);
+// Dias do mês a considerar: passados/atual até hoje; mês inteiro se já passou.
+const daysInMonth = new Date(yy, mm, 0).getDate();
+const occDays: { dateStr: string; weekday: number }[] = [];
+if (!isCurrentOrFuture || isCurrent) {
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${mes}-${String(d).padStart(2, '0')}`;
+    if (isCurrent && dateStr > todayLocal) break; // só dias já decorridos
+    occDays.push({ dateStr, weekday: weekdayOf(dateStr) });
+  }
 }
 
+const occ = occDays.length
+  ? computeOccupancy({ days: occDays, workingHours: whRows, timeOff: timeOffRows, appointments: cur.occAppts })
+  : [];
+
+// Ocupação geral do período medido
+let totalAvail = 0, totalBooked = 0;
+for (const o of occ) { totalAvail += o.availableMin; totalBooked += o.bookedMin; }
+const ocupacaoPct = totalAvail > 0 ? Math.round((totalBooked / totalAvail) * 100) : 0;
+
+// Faixa (dia da semana × período) historicamente mais vazia
+const aggBand = new Map<string, { weekday: number; bandKey: string; bandLabel: string; avail: number; booked: number }>();
+for (const o of occ) {
+  const key = `${o.weekday}-${o.bandKey}`;
+  const a = aggBand.get(key) ?? { weekday: o.weekday, bandKey: o.bandKey, bandLabel: o.bandLabel, avail: 0, booked: 0 };
+  a.avail += o.availableMin; a.booked += o.bookedMin;
+  aggBand.set(key, a);
+}
+const bandRank = [...aggBand.values()]
+  .filter(a => a.avail >= 120)
+  .map(a => ({ ...a, freePct: Math.round(100 * (1 - a.booked / a.avail)) }))
+  .sort((a, b) => b.freePct - a.freePct);
+const faixaOciosa = bandRank.length && bandRank[0].freePct >= 40 ? bandRank[0] : null;
+
+// Meta e projeção (só fazem sentido no mês corrente)
+const weekdaysWorked = new Set(whRows.map(w => w.weekday));
+let totalOpenDays = 0, elapsedOpenDays = 0;
+for (let d = 1; d <= daysInMonth; d++) {
+  const dateStr = `${mes}-${String(d).padStart(2, '0')}`;
+  if (!weekdaysWorked.has(weekdayOf(dateStr))) continue;
+  totalOpenDays++;
+  if (dateStr <= todayLocal) elapsedOpenDays++;
+}
+const projecaoCents = isCurrent && elapsedOpenDays > 0
+  ? Math.round((cur.realizadoCents / elapsedOpenDays) * totalOpenDays)
+  : null;
+const metaCents = prev.realizadoCents; // meta natural: bater o mês anterior
+const progressoPct = metaCents > 0 ? Math.round((cur.realizadoCents / metaCents) * 100) : null;
+const projecaoVsMetaPct = (metaCents > 0 && projecaoCents != null) ? Math.round((projecaoCents / metaCents) * 100) : null;
+
+// Variações vs mês anterior
+function pctDelta(curV: number, prevV: number): number | null {
+  if (prevV === 0) return null;
+  return Math.round(((curV - prevV) / prevV) * 1000) / 10;
+}
+const deltaReceita = pctDelta(cur.realizadoCents, prev.realizadoCents);
+const deltaAtend   = pctDelta(cur.completedCount, prev.completedCount);
+const deltaTicket  = pctDelta(cur.ticketCents, prev.ticketCents);
+const deltaNoShow  = Math.round((cur.noShowRate - prev.noShowRate) * 10) / 10; // pontos percentuais
+
+// Helpers de apresentação
 const brl = (cents: number) => 'R$ ' + Math.round(cents / 100).toLocaleString('pt-BR');
-const ticketCents = completedCount ? Math.round(realizadoCents / completedCount) : 0;
-const fechados = completedCount + noShowCount;
-const noShowRate = fechados ? Math.round((noShowCount / fechados) * 1000) / 10 : 0;
 
-const maxHora = Math.max(1, ...porHora);
-const horas = porHora.map((count, i) => ({ hora: START_HOUR + i, count, pct: Math.round((count / maxHora) * 100) }));
+const maxHora = Math.max(1, ...cur.porHora);
+const horas = cur.porHora.map((count, i) => ({ hora: START_HOUR + i, count, pct: Math.round((count / maxHora) * 100) }));
 
-const barbeirosRank = [...porBarbeiro.entries()]
+const barbeirosRank = [...cur.porBarbeiro.entries()]
   .map(([name, cents]) => ({ name, cents }))
   .sort((a, b) => b.cents - a.cents);
 const maxBarbeiro = Math.max(1, ...barbeirosRank.map(b => b.cents));
 
-const servicosRank = [...porServico.entries()]
+const servicosRank = [...cur.porServico.entries()]
   .map(([name, v]) => ({ name, count: v.count, cents: v.cents }))
   .sort((a, b) => b.cents - a.cents)
   .slice(0, 6);
 
-const temDados = rows.length > 0;
+const temDados = (cur.completedCount + cur.noShowCount + cur.abertoCount) > 0 || cur.previstoCents > 0 || clientesUnicos > 0;
+const tituloPainel = isAdmin ? 'Painel' : 'Seu desempenho';
+const subtitulo = isAdmin ? `${MESES[mm - 1]} de ${yy}` : `${barberRow.name.split(' ')[0]} · ${MESES[mm - 1]} de ${yy}`;
 ---
 
-<AdminLayout title="Relatórios" barberName={barberRow.name} role="admin">
-  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+<AdminLayout title="Relatórios" barberName={barberRow.name} role={session.role}>
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-5">
 
     <div class="flex items-center justify-between gap-3">
       <div>
-        <h1 class="text-lg font-medium text-neutral-100">Painel</h1>
-        <p class="text-sm text-neutral-500 mt-1">{MESES[mm - 1]} de {yy}</p>
+        <h1 class="text-lg font-medium text-neutral-100">{tituloPainel}</h1>
+        <p class="text-sm text-neutral-500 mt-1">{subtitulo}</p>
       </div>
       <div class="flex items-center gap-1">
         <a href={`/admin/relatorios?mes=${prevMes}`}
@@ -162,103 +293,186 @@ const temDados = rows.length > 0;
       </div>
     </div>
 
-    {abertoCount > 0 && (
+    {cur.abertoCount > 0 && (
       <div class="bg-amber-950/20 border border-amber-500/25 rounded-lg p-4 flex items-start gap-3">
         <svg class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.008M10.34 3.94l-8.4 14.55A1.5 1.5 0 003.24 21h17.52a1.5 1.5 0 001.3-2.51l-8.4-14.55a1.5 1.5 0 00-2.6 0z"/>
         </svg>
         <div>
-          <p class="text-sm text-amber-200 font-medium">{abertoCount} {abertoCount === 1 ? 'atendimento passou' : 'atendimentos passaram'} sem ser fechado ({brl(abertoCents)} em aberto)</p>
-          <p class="text-xs text-amber-200/60 mt-0.5">Marque cada um como concluído ou no-show na agenda do dia para a receita e a taxa de falta ficarem corretas.</p>
+          <p class="text-sm text-amber-200 font-medium">{cur.abertoCount} {cur.abertoCount === 1 ? 'atendimento passou' : 'atendimentos passaram'} sem ser fechado ({brl(cur.abertoCents)} em aberto)</p>
+          <p class="text-xs text-amber-200/60 mt-0.5">Marque cada um como concluído ou no-show na agenda do dia para a receita ficar correta.</p>
         </div>
       </div>
     )}
 
-    <section class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-      <div class="bg-dark-card border border-teal/20 rounded-lg p-4">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest">Receita realizada</p>
-        <p class="text-2xl font-bold text-teal-light mt-1 tabular-nums">{brl(realizadoCents)}</p>
-        <p class="text-xs text-neutral-600 mt-0.5">{completedCount} {completedCount === 1 ? 'atendimento' : 'atendimentos'}</p>
-      </div>
-      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest">Previsto</p>
-        <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{brl(previstoCents)}</p>
-        <p class="text-xs text-neutral-600 mt-0.5">confirmados que faltam</p>
-      </div>
-      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest">Ticket médio</p>
-        <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{brl(ticketCents)}</p>
-        <p class="text-xs text-neutral-600 mt-0.5">por atendimento</p>
-      </div>
-      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest">No-show</p>
-        <p class="text-2xl font-bold text-red-400 mt-1 tabular-nums">{noShowRate}%</p>
-        <p class="text-xs text-neutral-600 mt-0.5">{noShowCount} {noShowCount === 1 ? 'falta' : 'faltas'}</p>
-      </div>
-      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest">Receita perdida</p>
-        <p class="text-2xl font-bold text-red-400 mt-1 tabular-nums">{brl(perdidoCents)}</p>
-        <p class="text-xs text-neutral-600 mt-0.5">com faltas</p>
-      </div>
-      <div class="bg-dark-card border border-white/5 rounded-lg p-4">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest">Atendimentos</p>
-        <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{completedCount}</p>
-        <p class="text-xs text-neutral-600 mt-0.5">concluídos no mês</p>
-      </div>
-    </section>
-
-    {!temDados && (
+    {!temDados ? (
       <div class="bg-dark-card border border-white/5 rounded-lg py-12 text-center">
-        <p class="text-sm text-neutral-500">Nenhum agendamento neste mês.</p>
+        <p class="text-sm text-neutral-500">Nenhum movimento neste mês.</p>
       </div>
-    )}
-
-    {temDados && (
-      <section class="bg-dark-card border border-white/5 rounded-lg p-5">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Movimento por horário</p>
-        <div class="flex items-end gap-1.5" style="height: 120px;">
-          {horas.map(h => (
-            <div class="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
-              <span class="text-[10px] text-neutral-600 tabular-nums">{h.count > 0 ? h.count : ''}</span>
-              <div class="w-full bg-teal/70 rounded-t-sm" style={`height: ${h.pct}%`} title={`${h.hora}:00 — ${h.count} agendamentos`}></div>
-              <span class="text-[10px] text-neutral-600 tabular-nums">{h.hora}</span>
+    ) : (
+      <>
+        <section class="bg-gradient-to-br from-teal/15 to-dark-card border border-teal/25 rounded-xl p-5">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-xs text-teal-light/70 uppercase tracking-widest">Receita realizada</p>
+              <p class="text-4xl font-bold text-teal-light mt-1 tabular-nums">{brl(cur.realizadoCents)}</p>
+              <p class="text-xs text-neutral-400 mt-1">
+                {cur.completedCount} {cur.completedCount === 1 ? 'atendimento concluído' : 'atendimentos concluídos'}
+                {deltaReceita != null && (
+                  <span class:list={['ml-1 font-medium', deltaReceita >= 0 ? 'text-emerald-400' : 'text-red-400']}>
+                    {deltaReceita >= 0 ? '▲' : '▼'} {Math.abs(deltaReceita)}% vs. mês anterior
+                  </span>
+                )}
+              </p>
             </div>
-          ))}
-        </div>
-      </section>
-    )}
-
-    {barbeirosRank.length > 0 && (
-      <section class="bg-dark-card border border-white/5 rounded-lg p-5">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Receita por barbeiro</p>
-        <div class="space-y-3">
-          {barbeirosRank.map(b => (
-            <div class="flex items-center gap-3">
-              <span class="text-sm text-neutral-300 w-24 shrink-0 truncate">{b.name.split(' ')[0]}</span>
-              <div class="flex-1 h-2.5 bg-dark-surface rounded-full overflow-hidden">
-                <div class="h-full bg-teal" style={`width: ${Math.round((b.cents / maxBarbeiro) * 100)}%`}></div>
+            {cur.previstoCents > 0 && (
+              <div class="text-right shrink-0">
+                <p class="text-[11px] text-neutral-500 uppercase tracking-wider">A confirmar</p>
+                <p class="text-lg font-semibold text-neutral-200 tabular-nums mt-0.5">+ {brl(cur.previstoCents)}</p>
               </div>
-              <span class="text-sm font-medium text-neutral-200 tabular-nums w-20 text-right">{brl(b.cents)}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-    )}
+            )}
+          </div>
 
-    {servicosRank.length > 0 && (
-      <section class="bg-dark-card border border-white/5 rounded-lg p-5">
-        <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Serviços que mais faturam</p>
-        <div class="space-y-2.5">
-          {servicosRank.map((s, i) => (
-            <div class="flex items-baseline gap-3">
-              <span class="text-xs text-neutral-600 tabular-nums w-4">{i + 1}</span>
-              <span class="text-sm text-neutral-300 flex-1 min-w-0 truncate">{s.name}</span>
-              <span class="text-xs text-neutral-600 tabular-nums">{s.count}x</span>
-              <span class="text-sm font-medium text-teal-light tabular-nums w-20 text-right">{brl(s.cents)}</span>
+          {metaCents > 0 && (
+            <div class="mt-4">
+              <div class="flex items-center justify-between text-xs mb-1.5">
+                <span class="text-neutral-400">Meta: bater o mês passado ({brl(metaCents)})</span>
+                <span class:list={['font-medium tabular-nums', (progressoPct ?? 0) >= 100 ? 'text-emerald-400' : 'text-neutral-300']}>{progressoPct}%</span>
+              </div>
+              <div class="h-2.5 bg-dark-surface rounded-full overflow-hidden">
+                <div class:list={['h-full rounded-full', (progressoPct ?? 0) >= 100 ? 'bg-emerald-500' : 'bg-teal']} style={`width: ${Math.min(100, progressoPct ?? 0)}%`}></div>
+              </div>
+              {projecaoCents != null && (
+                <p class="text-[11px] text-neutral-500 mt-1.5">
+                  No ritmo atual, o mês deve fechar em <span class="text-neutral-300 font-medium tabular-nums">{brl(projecaoCents)}</span>
+                  {projecaoVsMetaPct != null && (
+                    <span class:list={[projecaoVsMetaPct >= 100 ? 'text-emerald-400' : 'text-amber-400']}> ({projecaoVsMetaPct >= 100 ? 'supera' : 'fica abaixo d'}a meta)</span>
+                  )}
+                </p>
+              )}
             </div>
-          ))}
-        </div>
-      </section>
+          )}
+        </section>
+
+        <section class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest">Ticket médio</p>
+            <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{brl(cur.ticketCents)}</p>
+            {deltaTicket != null
+              ? <p class:list={['text-xs mt-0.5 font-medium', deltaTicket >= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaTicket >= 0 ? '▲' : '▼'} {Math.abs(deltaTicket)}%</p>
+              : <p class="text-xs text-neutral-600 mt-0.5">por atendimento</p>}
+          </div>
+          <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest">Atendimentos</p>
+            <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{cur.completedCount}</p>
+            {deltaAtend != null
+              ? <p class:list={['text-xs mt-0.5 font-medium', deltaAtend >= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaAtend >= 0 ? '▲' : '▼'} {Math.abs(deltaAtend)}%</p>
+              : <p class="text-xs text-neutral-600 mt-0.5">concluídos</p>}
+          </div>
+          <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest">No-show</p>
+            <p class="text-2xl font-bold text-red-400 mt-1 tabular-nums">{cur.noShowRate}%</p>
+            {Math.abs(deltaNoShow) >= 0.1
+              ? <p class:list={['text-xs mt-0.5 font-medium', deltaNoShow <= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaNoShow <= 0 ? '▼' : '▲'} {Math.abs(deltaNoShow)} p.p.</p>
+              : <p class="text-xs text-neutral-600 mt-0.5">{cur.noShowCount} {cur.noShowCount === 1 ? 'falta' : 'faltas'}</p>}
+          </div>
+          <div class="bg-dark-card border border-white/5 rounded-lg p-4">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest">Receita perdida</p>
+            <p class="text-2xl font-bold text-red-400 mt-1 tabular-nums">{brl(cur.perdidoCents)}</p>
+            <p class="text-xs text-neutral-600 mt-0.5">com faltas</p>
+          </div>
+        </section>
+
+        <section class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="bg-dark-card border border-white/5 rounded-lg p-5">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest mb-3">Clientes do mês</p>
+            <div class="flex items-baseline gap-2">
+              <span class="text-3xl font-bold text-neutral-100 tabular-nums">{clientesUnicos}</span>
+              <span class="text-xs text-neutral-500">únicos</span>
+            </div>
+            {clientesUnicos > 0 && (
+              <>
+                <div class="flex h-2.5 rounded-full overflow-hidden mt-3 bg-dark-surface">
+                  <div class="bg-teal h-full" style={`width: ${recorrentesPct}%`} title={`${recorrentesCount} recorrentes`}></div>
+                  <div class="bg-teal-light/40 h-full" style={`width: ${100 - recorrentesPct}%`} title={`${novosCount} novos`}></div>
+                </div>
+                <div class="flex justify-between text-xs mt-2">
+                  <span class="text-teal-light">● {recorrentesCount} recorrentes ({recorrentesPct}%)</span>
+                  <span class="text-neutral-400">● {novosCount} novos</span>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div class="bg-dark-card border border-white/5 rounded-lg p-5">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest mb-3">Ocupação da cadeira</p>
+            {occ.length ? (
+              <>
+                <div class="flex items-baseline gap-2">
+                  <span class="text-3xl font-bold text-neutral-100 tabular-nums">{ocupacaoPct}%</span>
+                  <span class="text-xs text-neutral-500">do horário disponível</span>
+                </div>
+                <div class="h-2.5 bg-dark-surface rounded-full overflow-hidden mt-3">
+                  <div class="h-full bg-teal" style={`width: ${ocupacaoPct}%`}></div>
+                </div>
+                {faixaOciosa && (
+                  <p class="text-xs text-neutral-400 mt-3 leading-relaxed">
+                    💡 <span class="text-neutral-300">{DIAS_SEMANA[faixaOciosa.weekday]} {faixaOciosa.bandLabel}</span> é a faixa mais vazia ({faixaOciosa.freePct}% livre). Boa hora pra uma promoção.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p class="text-sm text-neutral-600">Sem dados de ocupação para este mês.</p>
+            )}
+          </div>
+        </section>
+
+        <section class="bg-dark-card border border-white/5 rounded-lg p-5">
+          <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Movimento por horário</p>
+          <div class="flex items-end gap-1.5" style="height: 120px;">
+            {horas.map(h => (
+              <div class="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+                <span class="text-[10px] text-neutral-600 tabular-nums">{h.count > 0 ? h.count : ''}</span>
+                <div class="w-full bg-teal/70 hover:bg-teal rounded-t-sm transition-colors" style={`height: ${h.pct}%`} title={`${h.hora}:00 — ${h.count} agendamentos`}></div>
+                <span class="text-[10px] text-neutral-600 tabular-nums">{h.hora}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {isAdmin && barbeirosRank.length > 0 && (
+          <section class="bg-dark-card border border-white/5 rounded-lg p-5">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Receita por barbeiro</p>
+            <div class="space-y-3">
+              {barbeirosRank.map(b => (
+                <div class="flex items-center gap-3">
+                  <span class="text-sm text-neutral-300 w-24 shrink-0 truncate">{b.name.split(' ')[0]}</span>
+                  <div class="flex-1 h-2.5 bg-dark-surface rounded-full overflow-hidden">
+                    <div class="h-full bg-teal" style={`width: ${Math.round((b.cents / maxBarbeiro) * 100)}%`}></div>
+                  </div>
+                  <span class="text-sm font-medium text-neutral-200 tabular-nums w-20 text-right">{brl(b.cents)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {servicosRank.length > 0 && (
+          <section class="bg-dark-card border border-white/5 rounded-lg p-5">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Serviços que mais faturam</p>
+            <div class="space-y-2.5">
+              {servicosRank.map((s, i) => (
+                <div class="flex items-baseline gap-3">
+                  <span class="text-xs text-neutral-600 tabular-nums w-4">{i + 1}</span>
+                  <span class="text-sm text-neutral-300 flex-1 min-w-0 truncate">{s.name}</span>
+                  <span class="text-xs text-neutral-600 tabular-nums">{s.count}x</span>
+                  <span class="text-sm font-medium text-teal-light tabular-nums w-20 text-right">{brl(s.cents)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </>
     )}
 
   </main>

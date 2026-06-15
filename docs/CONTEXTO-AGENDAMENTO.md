@@ -140,12 +140,28 @@ C:\DEV\barbearia\
 
 ## Pendências conhecidas / débitos técnicos
 
-1. **Login case-insensitive**: hoje `Bayron ≠ bayron`. Converter slug pra lowercase antes da comparação no login.
-2. **Senhas no output do seed**: `seed.mjs` imprime as senhas iniciais no log (problema de segurança). Esconder ou só mostrar com flag explícita.
-3. **Validação anti-placeholder no seed**: rejeitar senhas que tenham `<>` ou padrões parecidos (causou problema no deploy — usuário copiou os colchetes literais).
-4. **Botão "Avisar pelo WhatsApp"** na tela `/a/{token}` — verificar se está presente; era previsto no V1.
-5. **Rate limit por IP+usuário** em vez de só por IP — evitar bloquear outros usuários quando um erra muito.
-6. **Documentação dos barbeiros**: criar guia rápido de como cada um usa o painel (talvez vídeo curto).
+> Atualizado em 2026-06-10. Resolvidos nesta data: login case-insensitive (slug
+> lowercased no login), senhas fora do stdout do seed + validação anti-placeholder
+> + env vars obrigatórias, rate limit por IP+slug no login admin, fallback fraco de
+> SESSION_SECRET removido (agora obrigatório em qualquer ambiente, mín. 32 chars),
+> telefones normalizados no banco (migration 0004, escrita única em lib/phone.ts),
+> validação de conflito e de intervalo passado no time_off, suporte a múltiplas
+> janelas de expediente por dia (booking + slots).
+
+1. **Backup externo do banco**: hoje o backup do EasyPanel fica no MESMO disco da
+   VPS. Se a VPS morrer, banco e backup morrem juntos. PRIORIDADE MÁXIMA —
+   resolver antes de qualquer feature (S3/B2/rclone, custo ~zero).
+2. **Log estruturado**: pino está nas dependências mas não é usado. Sem trilha de
+   logins, cancelamentos e criações além do audit básico (lastModifiedById).
+3. **Seed não é atômico nem retomável**: se morrer no meio, deixa o banco semeado
+   pela metade e o check "já semeado" impede re-rodar. Embrulhar em transação.
+4. **Rate limit em memória**: zera a cada restart do container. Aceitável em
+   single-node; revisar se algum dia escalar.
+5. **Sem testes na rota time_off**: as validações (conflito com cliente, intervalo
+   passado) só têm cobertura manual. Criar `tests/timeOff.test.ts` se a rota crescer.
+6. **`/admin/relatorios` é placeholder**: terminar ou remover o link.
+7. **Documentação dos barbeiros**: criar guia rápido de como cada um usa o painel
+   (talvez vídeo curto).
 
 ## Próximas funcionalidades planejadas (V1.1+)
 

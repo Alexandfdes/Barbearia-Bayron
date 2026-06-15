@@ -12,9 +12,15 @@ export interface CustomerSessionData {
 
 function secret(): string {
   const s = process.env.SESSION_SECRET;
-  if (s) return s;
-  if (process.env.NODE_ENV === 'production') throw new Error('SESSION_SECRET não definido');
-  return 'dev-secret-must-be-at-least-32-chars!!';
+  if (!s) {
+    throw new Error(
+      'SESSION_SECRET não definido. Gere um com: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+    );
+  }
+  if (s.length < 32) {
+    throw new Error('SESSION_SECRET muito curto: iron-session exige no mínimo 32 caracteres.');
+  }
+  return s;
 }
 
 export async function getCustomerSession(request: Request): Promise<CustomerSessionData | null> {
@@ -41,14 +47,5 @@ export function clearCustomerSessionCookie(): string {
   return `${CUSTOMER_SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
 }
 
-/**
- * Extrai só dígitos e pega os últimos 11 (telefone BR celular).
- * Aceita formatos: "(84) 99665-8951", "84996658951", "+55 84 99665-8951", etc.
- * Retorna string vazia se não tiver dígitos suficientes.
- */
-export function normalizePhone(input: string): string {
-  const digits = (input ?? '').replace(/\D/g, '');
-  if (digits.length < 10) return '';
-  // Telefones BR têm 10 (fixo) ou 11 (celular). Se vier com DDI 55, pega os últimos 11.
-  return digits.length > 11 ? digits.slice(-11) : digits;
-}
+// Normalização canônica vive em lib/phone.ts — re-export pra compatibilidade.
+export { normalizePhone } from './phone.js';

@@ -19,6 +19,10 @@ const bodySchema = z.object({
   customerBirthdate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data de nascimento inválida'),
   startsAt:          z.string().refine(s => !isNaN(new Date(s).getTime()), 'Data/hora inválida'),
   idempotencyKey:    z.string().min(8).max(64).optional(),
+  // Combo Boris: quando true, productSlug é obrigatório. Preço/desconto são
+  // resolvidos no servidor (bookAppointment); o cliente só escolhe o produto.
+  combo:             z.boolean().optional(),
+  productSlug:       z.string().min(2).max(60).optional(),
 });
 
 function isPlausibleBirthdate(iso: string): boolean {
@@ -57,6 +61,16 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
   const { barberId, serviceId, customerName, customerPhone, customerBirthdate, startsAt: startsAtStr, idempotencyKey } = parsed.data;
 
+  // Combo: exige produto. Elegibilidade do serviço e existência do produto
+  // são re-validadas dentro do bookAppointment (contra dados do servidor).
+  let combo: { productSlug: string } | null = null;
+  if (parsed.data.combo) {
+    if (!parsed.data.productSlug) {
+      return json({ error: 'Escolha um produto Boris para o combo' }, 400);
+    }
+    combo = { productSlug: parsed.data.productSlug };
+  }
+
   // Camada 2: por telefone (mesmo IP) — barra abuso repetido com um número
   const phoneKey = customerPhone.replace(/\D/g, '').slice(-11);
   const phoneRl = checkRateLimit(`booking-phone:${ip}:${phoneKey}`, { maxTries: 5 });
@@ -89,6 +103,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       startsAt,
       createdBy: 'customer',
       idempotencyKey: idempotencyKey ?? null,
+      combo,
     });
     if (!result.ok) return json({ error: result.error }, result.httpStatus);
     return json(result, 201);
