@@ -7,6 +7,9 @@ export const WHATSAPP_NUMBER = "15551547238";
 
 export const TOPSALAO_URL = '/agendar';
 
+// Domínio oficial em produção — fonte única para canonical, og:url e a imagem de preview.
+export const SITE_URL = "https://bayron.alexandrefdev.tech";
+
 // Link do Instagram
 export const INSTAGRAM_URL = "https://www.instagram.com/barbearia_bayron/";
 

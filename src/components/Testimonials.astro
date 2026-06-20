@@ -1,5 +1,6 @@
 ---
 import depoimentos from '../data/depoimentos.json';
+import { SITE_URL } from '../config';
 
 const GOOGLE_REVIEWS_URL = "https://www.google.com/maps/search/Barbearia+Bayron+Mossor%C3%B3+RN/";
 const RATING = 5.0;
@@ -8,6 +9,7 @@ const REVIEW_COUNT = 227;
 const ldJson = {
   "@context": "https://schema.org",
   "@type": "HairSalon",
+  "@id": `${SITE_URL}/#business`,
   "name": "Barbearia Bayron",
   "aggregateRating": {
     "@type": "AggregateRating",
