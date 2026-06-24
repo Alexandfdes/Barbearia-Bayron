@@ -36,6 +36,13 @@
     background-color: var(--color-teal);
     color: var(--color-white);
   }
+
+  /* Edge/IE adicionam um "olho" e um "x" nativos em campos de senha.
+     Escondemos pra não duplicar com o nosso toggle (#toggle-password). */
+  input[type="password"]::-ms-reveal,
+  input[type="password"]::-ms-clear {
+    display: none;
+  }
 }
 
 @utility no-scrollbar {

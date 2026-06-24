@@ -32,7 +32,6 @@ if (session) return Astro.redirect('/admin');
             type="text"
             autocomplete="username"
             autofocus
-            placeholder="ex: bayron"
             class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-teal/50 transition-colors"
           />
         </div>
@@ -41,12 +40,32 @@ if (session) return Astro.redirect('/admin');
           <label for="password" class="block text-xs text-neutral-500 uppercase tracking-widest mb-2">
             Senha
           </label>
-          <input
-            id="password"
-            type="password"
-            autocomplete="current-password"
-            class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-teal/50 transition-colors"
-          />
+          <div class="relative">
+            <input
+              id="password"
+              type="password"
+              autocomplete="current-password"
+              class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2.5 pr-11 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-teal/50 transition-colors"
+            />
+            <button
+              type="button"
+              id="toggle-password"
+              aria-label="Mostrar senha"
+              aria-pressed="false"
+              class="absolute inset-y-0 right-0 flex items-center px-3 text-neutral-500 hover:text-neutral-200 focus:outline-none focus:text-neutral-200 transition-colors"
+            >
+              <svg id="icon-eye" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              <svg id="icon-eye-off" class="hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9.88 9.88a3 3 0 0 0 4.24 4.24" />
+                <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c6.5 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3.5 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                <line x1="2" x2="22" y1="2" y2="22" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div id="login-error" class="hidden text-red-400 text-sm text-center py-1"></div>
@@ -68,6 +87,19 @@ if (session) return Astro.redirect('/admin');
       const passEl   = document.getElementById('password') as HTMLInputElement;
       const errorEl  = document.getElementById('login-error') as HTMLDivElement;
       const btnEl    = document.getElementById('login-btn') as HTMLButtonElement;
+      const toggleEl = document.getElementById('toggle-password') as HTMLButtonElement;
+      const iconEye    = document.getElementById('icon-eye') as unknown as SVGElement;
+      const iconEyeOff = document.getElementById('icon-eye-off') as unknown as SVGElement;
+
+      toggleEl.addEventListener('click', () => {
+        const show = passEl.type === 'password';
+        passEl.type = show ? 'text' : 'password';
+        iconEye.classList.toggle('hidden', show);
+        iconEyeOff.classList.toggle('hidden', !show);
+        toggleEl.setAttribute('aria-pressed', String(show));
+        toggleEl.setAttribute('aria-label', show ? 'Ocultar senha' : 'Mostrar senha');
+        passEl.focus();
+      });
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
