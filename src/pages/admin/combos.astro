@@ -1,0 +1,252 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { barbers, combos, services, products } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+if (session.role !== 'admin') return Astro.redirect('/admin');
+
+const list = db.select({
+  id: combos.id, name: combos.name, serviceId: combos.serviceId, productId: combos.productId,
+  discountPct: combos.discountPct, weekdays: combos.weekdays, image: combos.image, active: combos.active,
+  serviceName: services.name, productName: products.name,
+})
+  .from(combos)
+  .leftJoin(services, eq(services.id, combos.serviceId))
+  .leftJoin(products, eq(products.id, combos.productId))
+  .orderBy(combos.sortOrder, combos.id).all();
+
+const serviceOpts = db.select({ id: services.id, name: services.name }).from(services).where(eq(services.active, true)).orderBy(services.name).all();
+const productOpts = db.select({ id: products.id, name: products.name }).from(products).where(eq(products.active, true)).orderBy(products.sortOrder).all();
+
+const WD_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const brl = (c: number) => 'R$ ' + (c / 100).toFixed(2).replace('.', ',');
+function weekdayLabels(mask: number): string {
+  const days = WD_SHORT.filter((_, i) => mask & (1 << i));
+  return days.length === 7 ? 'Todos os dias' : (days.length ? days.join(', ') : 'Nenhum dia');
+}
+---
+
+<AdminLayout title="Combos" barberName={barberRow.name} role={session.role}>
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-24">
+
+    <div class="flex items-center justify-between gap-3">
+      <div>
+        <h1 class="text-lg font-medium text-neutral-100">Combos do dia</h1>
+        <p class="text-sm text-neutral-500 mt-1">Serviço + produto com desconto. Aparece no site nos dias marcados.</p>
+      </div>
+      <button id="btn-add" class="shrink-0 flex items-center gap-2 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest text-xs px-4 py-2.5 rounded transition-colors">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+        Adicionar
+      </button>
+    </div>
+
+    {(serviceOpts.length === 0 || productOpts.length === 0) && (
+      <div class="bg-amber-950/20 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-300/90">
+        Para criar um combo você precisa de pelo menos um serviço e um produto ativos.
+      </div>
+    )}
+
+    {list.length === 0 && (
+      <div class="bg-dark-card border border-white/5 rounded-lg py-12 text-center">
+        <p class="text-sm text-neutral-400">Nenhum combo cadastrado.</p>
+      </div>
+    )}
+
+    <div class="space-y-2">
+      {list.map(c => (
+        <div class="flex items-center gap-3 bg-dark-card border border-white/5 rounded-lg p-3"
+             data-id={String(c.id)} data-name={c.name} data-service={String(c.serviceId)} data-product={String(c.productId)}
+             data-discount={String(c.discountPct)} data-weekdays={String(c.weekdays)} data-active={String(c.active)} data-image={c.image ?? ''}>
+          <div class="w-14 h-14 shrink-0 rounded-md overflow-hidden bg-dark-surface border border-white/5">
+            {c.image
+              ? <img src={c.image} alt={c.name} class="w-full h-full object-cover" />
+              : <div class="w-full h-full flex items-center justify-center text-neutral-700 text-[10px]">sem foto</div>}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <p class="text-sm font-medium text-neutral-100 truncate">{c.name}</p>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-teal/15 text-teal-light shrink-0">{c.discountPct}% OFF</span>
+              {!c.active && <span class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700/50 text-neutral-400 shrink-0">inativo</span>}
+            </div>
+            <p class="text-xs text-neutral-500 truncate">{c.serviceName} + {c.productName}</p>
+            <p class="text-[10px] text-neutral-600 mt-0.5">{weekdayLabels(c.weekdays)}</p>
+          </div>
+          <div class="flex flex-col gap-1.5 shrink-0">
+            <button data-action="edit" class="text-[11px] px-2.5 py-1 rounded border border-white/10 hover:border-teal/30 text-neutral-300 hover:text-teal-light transition-colors">Editar</button>
+            <div class="flex gap-1.5">
+              <button data-action="toggle" class="flex-1 text-[11px] px-2 py-1 rounded border border-white/10 hover:border-white/20 text-neutral-400 transition-colors">{c.active ? 'Ocultar' : 'Ativar'}</button>
+              <button data-action="delete" class="text-[11px] px-2 py-1 rounded border border-red-500/20 hover:bg-red-500/10 text-red-400/80 transition-colors" aria-label="Excluir">✕</button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <!-- Modal add/editar -->
+    <div id="combo-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center px-4">
+      <div class="absolute inset-0 bg-black/70" data-close></div>
+      <div class="relative bg-dark-card border border-white/10 rounded-lg p-5 w-full max-w-sm space-y-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-neutral-200" id="modal-title">Novo combo</p>
+          <button type="button" data-close class="text-neutral-500 hover:text-neutral-300 text-xs">✕ fechar</button>
+        </div>
+        <input type="hidden" id="f-id" />
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome</label>
+          <input id="f-name" type="text" maxlength="100" placeholder="Ex.: Combo de Sexta" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Serviço</label>
+          <select id="f-service" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+            {serviceOpts.map(s => <option value={String(s.id)}>{s.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Produto</label>
+          <select id="f-product" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+            {productOpts.map(p => <option value={String(p.id)}>{p.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Desconto (%)</label>
+          <input id="f-discount" type="number" min="0" max="90" value="10" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50 tabular-nums" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Dias da semana</label>
+          <div class="grid grid-cols-7 gap-1" id="f-weekdays">
+            {WD_SHORT.map((d, i) => (
+              <label class="flex flex-col items-center gap-1 text-[10px] text-neutral-400 cursor-pointer">
+                <span>{d}</span>
+                <input type="checkbox" data-weekday={String(i)} class="accent-teal" />
+              </label>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Foto (opcional)</label>
+          <div class="flex items-center gap-3">
+            <img id="f-preview" class="hidden w-14 h-14 rounded-md object-cover border border-white/5" />
+            <input id="f-image" type="file" accept="image/jpeg,image/png,image/webp" class="flex-1 text-xs text-neutral-400 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-teal/20 file:text-teal-light file:text-xs file:cursor-pointer" />
+          </div>
+          <p class="text-[10px] text-neutral-600 mt-1">Se vazio, usa a foto do produto.</p>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-neutral-300">
+          <input id="f-active" type="checkbox" checked class="accent-teal" /> Ativo
+        </label>
+        <div id="modal-error" class="hidden text-red-400 text-xs text-center"></div>
+        <button id="f-save" type="button" class="w-full bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest text-xs py-3 rounded transition-colors disabled:opacity-50">Salvar</button>
+      </div>
+    </div>
+
+  </main>
+</AdminLayout>
+
+<script>
+  const modal   = document.getElementById('combo-modal') as HTMLElement;
+  const title   = document.getElementById('modal-title') as HTMLElement;
+  const fId     = document.getElementById('f-id') as HTMLInputElement;
+  const fName   = document.getElementById('f-name') as HTMLInputElement;
+  const fService = document.getElementById('f-service') as HTMLSelectElement;
+  const fProduct = document.getElementById('f-product') as HTMLSelectElement;
+  const fDiscount = document.getElementById('f-discount') as HTMLInputElement;
+  const fImage  = document.getElementById('f-image') as HTMLInputElement;
+  const fActive = document.getElementById('f-active') as HTMLInputElement;
+  const fPrev   = document.getElementById('f-preview') as HTMLImageElement;
+  const errEl   = document.getElementById('modal-error') as HTMLElement;
+  const saveBtn = document.getElementById('f-save') as HTMLButtonElement;
+  const wdBoxes = Array.from(document.querySelectorAll('#f-weekdays input[type=checkbox]')) as HTMLInputElement[];
+
+  function setWeekdays(mask: number) {
+    wdBoxes.forEach(b => { b.checked = (mask & (1 << Number(b.dataset.weekday))) !== 0; });
+  }
+  function getWeekdays(): number {
+    return wdBoxes.reduce((m, b) => m | (b.checked ? (1 << Number(b.dataset.weekday)) : 0), 0);
+  }
+
+  function openModal(edit?: any) {
+    errEl.classList.add('hidden'); errEl.textContent = '';
+    fImage.value = '';
+    if (edit) {
+      title.textContent = 'Editar combo';
+      fId.value = edit.id; fName.value = edit.name;
+      fService.value = edit.service; fProduct.value = edit.product;
+      fDiscount.value = edit.discount; fActive.checked = edit.active;
+      setWeekdays(Number(edit.weekdays));
+      if (edit.image) { fPrev.src = edit.image; fPrev.classList.remove('hidden'); } else fPrev.classList.add('hidden');
+    } else {
+      title.textContent = 'Novo combo';
+      fId.value = ''; fName.value = ''; fDiscount.value = '10'; fActive.checked = true;
+      fService.selectedIndex = 0; fProduct.selectedIndex = 0;
+      setWeekdays(127);
+      fPrev.classList.add('hidden');
+    }
+    modal.classList.remove('hidden');
+  }
+  function closeModal() { modal.classList.add('hidden'); }
+
+  document.getElementById('btn-add')?.addEventListener('click', () => openModal());
+  modal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeModal));
+  fImage.addEventListener('change', () => {
+    const f = fImage.files?.[0];
+    if (f) { fPrev.src = URL.createObjectURL(f); fPrev.classList.remove('hidden'); }
+  });
+
+  document.querySelectorAll('[data-id]').forEach(card => {
+    const el = card as HTMLElement;
+    const id = el.dataset.id!;
+    el.querySelector('[data-action="edit"]')?.addEventListener('click', () => openModal({
+      id, name: el.dataset.name, service: el.dataset.service, product: el.dataset.product,
+      discount: el.dataset.discount, weekdays: el.dataset.weekdays, active: el.dataset.active === 'true', image: el.dataset.image,
+    }));
+    el.querySelector('[data-action="toggle"]')?.addEventListener('click', async () => {
+      const fd = new FormData(); fd.set('active', el.dataset.active === 'true' ? 'false' : 'true');
+      const res = await fetch(`/api/admin/combos/${id}`, { method: 'PATCH', body: fd });
+      if (res.ok) location.reload();
+    });
+    el.querySelector('[data-action="delete"]')?.addEventListener('click', async () => {
+      if (!confirm(`Excluir o combo "${el.dataset.name}"?`)) return;
+      const res = await fetch(`/api/admin/combos/${id}`, { method: 'DELETE' });
+      if (res.ok) location.reload();
+    });
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    errEl.classList.add('hidden');
+    const name = fName.value.trim();
+    if (name.length < 2) { errEl.textContent = 'Informe o nome'; errEl.classList.remove('hidden'); return; }
+    if (!fService.value || !fProduct.value) { errEl.textContent = 'Escolha serviço e produto'; errEl.classList.remove('hidden'); return; }
+
+    const fd = new FormData();
+    fd.set('name', name);
+    fd.set('serviceId', fService.value);
+    fd.set('productId', fProduct.value);
+    fd.set('discountPct', fDiscount.value || '0');
+    fd.set('weekdays', String(getWeekdays()));
+    fd.set('active', fActive.checked ? 'true' : 'false');
+    if (fImage.files?.[0]) fd.set('image', fImage.files[0]);
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Salvando...';
+    const id = fId.value;
+    const url = id ? `/api/admin/combos/${id}` : '/api/admin/combos';
+    const method = id ? 'PATCH' : 'POST';
+    try {
+      const res = await fetch(url, { method, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { location.reload(); return; }
+      errEl.textContent = data.error ?? 'Erro ao salvar'; errEl.classList.remove('hidden');
+    } catch {
+      errEl.textContent = 'Erro de conexão'; errEl.classList.remove('hidden');
+    }
+    saveBtn.disabled = false; saveBtn.textContent = 'Salvar';
+  });
+</script>

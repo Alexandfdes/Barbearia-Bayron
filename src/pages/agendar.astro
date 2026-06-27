@@ -55,8 +55,7 @@ import Layout from '../layouts/Layout.astro';
 
 <script>
 import {
-  COMBO_ELIGIBLE_SLUGS, COMBO_DISCOUNT_PCT,
-  comboProducts, applyComboDiscount, type ComboProduct,
+  applyDiscountPct, type ComboProduct,
 } from '../lib/combo';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
@@ -67,7 +66,11 @@ interface SlotInfo { utc: string; time: string; }
 // ── Estado ────────────────────────────────────────────────────────────────────
 // Modo combo: ativado por /agendar?combo=1. Mostra só os combos Cabelo+Barba
 // elegíveis e exige a escolha de um produto Boris (preço com 10% OFF).
-const comboMode = new URLSearchParams(location.search).get('combo') === '1';
+const comboParam = new URLSearchParams(location.search).get('combo');
+const comboId = comboParam && /^\d+$/.test(comboParam) ? parseInt(comboParam, 10) : null;
+const comboMode = comboId !== null;
+let comboData: any = null;   // combo carregado de /api/combos (serviço, produto, desconto)
+let comboPct = 10;           // desconto do combo (%)
 let selProduct: ComboProduct | null = null;
 
 let services: Service[] = [];
@@ -173,6 +176,18 @@ async function initStep1() {
     const res = await fetch('/api/services');
     if (!res.ok) throw new Error('falha na API');
     services = await res.json();
+    if (comboMode) {
+      try {
+        const cr = await fetch('/api/combos');
+        const list = cr.ok ? await cr.json() : [];
+        comboData = (list as any[]).find(c => c.id === comboId) ?? null;
+        if (comboData) {
+          comboPct = comboData.discountPct;
+          selService = services.find(s => s.id === comboData.serviceId) ?? null;
+          selProduct = { slug: comboData.productSlug, name: comboData.productName, priceCents: comboData.productCents };
+        }
+      } catch { comboData = null; }
+    }
     renderStep1();
   } catch {
     wizard.innerHTML = `<p class="text-center text-red-400 py-10">
@@ -208,82 +223,52 @@ function renderStep1() {
 function renderStep1Combo() {
   setProgress(1);
 
-  const eligible = services.filter(s => COMBO_ELIGIBLE_SLUGS.includes(s.slug));
-  if (eligible.length === 0) {
+  if (!comboData || !selService || !selProduct) {
     wizard.innerHTML = `
       <div class="animate-fade-in text-center py-10">
-        <p class="text-neutral-400 text-sm mb-4">O Combo Boris está indisponível no momento.</p>
+        <p class="text-neutral-400 text-sm mb-4">Este combo não está mais disponível.</p>
         <a href="/agendar" class="text-teal-light underline text-sm">Agendar um serviço normal</a>
       </div>`;
     return;
   }
 
-  const serviceCards = eligible.map(s => {
-    const active = selService?.id === s.id;
-    const cls = active
-      ? 'text-left bg-teal/10 border border-teal rounded-md p-4 w-full transition-all'
-      : 'text-left bg-dark-card border border-white/5 hover:border-teal/40 rounded-md p-4 w-full transition-all group';
-    return `<button data-action="combo-select-service" data-id="${s.id}" class="${cls}">
-      <div class="flex items-center justify-between pointer-events-none">
-        <span class="text-sm font-medium ${active ? 'text-teal-light' : 'text-neutral-200'}">${s.name}</span>
-        <span class="text-sm whitespace-nowrap">
-          <span class="text-teal-light font-semibold">${fmt(applyComboDiscount(s.priceCents))}</span>
-          <span class="text-neutral-600 line-through ml-1 text-xs">${fmt(s.priceCents)}</span>
-        </span>
-      </div>
-    </button>`;
-  }).join('');
-
-  const prods = comboProducts();
-  const productCards = prods.map(p => {
-    const active = selProduct?.slug === p.slug;
-    const cls = active
-      ? 'text-left bg-teal/10 border border-teal rounded-md p-4 w-full transition-all'
-      : 'text-left bg-dark-card border border-white/5 hover:border-teal/40 rounded-md p-4 w-full transition-all group';
-    return `<button data-action="combo-select-product" data-slug="${p.slug}" class="${cls}">
-      <div class="flex items-center justify-between pointer-events-none">
-        <span class="text-sm font-medium ${active ? 'text-teal-light' : 'text-neutral-200'}">${p.name}</span>
-        <span class="text-sm whitespace-nowrap">
-          <span class="text-teal-light font-semibold">${fmt(applyComboDiscount(p.priceCents))}</span>
-          <span class="text-neutral-600 line-through ml-1 text-xs">${fmt(p.priceCents)}</span>
-        </span>
-      </div>
-    </button>`;
-  }).join('');
-
-  const ready = !!selService && !!selProduct;
-  const totalCents = ready ? applyComboDiscount(selService!.priceCents) + applyComboDiscount(selProduct!.priceCents) : 0;
-  const fullCents  = ready ? selService!.priceCents + selProduct!.priceCents : 0;
+  const svcD  = applyDiscountPct(selService.priceCents, comboPct);
+  const prodD = applyDiscountPct(selProduct.priceCents, comboPct);
+  const totalCents = svcD + prodD;
+  const fullCents  = selService.priceCents + selProduct.priceCents;
   const economiaCents = fullCents - totalCents;
-  const pctLabel = `${Math.round(COMBO_DISCOUNT_PCT * 100)}%`;
-
-  const totalBox = ready ? `
-    <div class="bg-dark-card border border-teal/30 rounded-md p-4 mt-2">
-      <div class="flex items-center justify-between">
-        <span class="text-sm text-neutral-300 font-medium">Total do combo</span>
-        <div class="text-right">
-          <span class="text-teal-light font-bold text-xl">${fmt(totalCents)}</span>
-          <span class="text-neutral-600 line-through ml-2 text-sm">${fmt(fullCents)}</span>
-        </div>
-      </div>
-      <p class="text-xs text-teal-light/80 mt-1 text-right">Você economiza ${fmt(economiaCents)} (${pctLabel} OFF)</p>
-    </div>` : `
-    <p class="text-xs text-neutral-500 text-center mt-2">Escolha o corte e o produto para ver o total com desconto.</p>`;
 
   wizard.innerHTML = `
     <div class="animate-fade-in">
-      ${stepHeader('Monte seu Combo Boris', 'Passo 1 de 4 · Cabelo + Barba + produto, com ' + pctLabel + ' OFF')}
+      ${stepHeader(comboData.name, 'Passo 1 de 4 · ' + comboPct + '% OFF no combo')}
 
-      <p class="text-xs text-neutral-500 uppercase tracking-widest mb-3">1 · Escolha o corte + barba</p>
-      <div class="grid grid-cols-1 gap-2.5 mb-7">${serviceCards}</div>
+      <div class="bg-dark-card border border-teal/30 rounded-md p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-sm text-neutral-200">${selService.name}</span>
+          <span class="text-sm whitespace-nowrap">
+            <span class="text-teal-light font-semibold">${fmt(svcD)}</span>
+            <span class="text-neutral-600 line-through ml-1 text-xs">${fmt(selService.priceCents)}</span>
+          </span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-sm text-neutral-200">${selProduct.name} <span class="text-neutral-600 text-xs">(retira na barbearia)</span></span>
+          <span class="text-sm whitespace-nowrap">
+            <span class="text-teal-light font-semibold">${fmt(prodD)}</span>
+            <span class="text-neutral-600 line-through ml-1 text-xs">${fmt(selProduct.priceCents)}</span>
+          </span>
+        </div>
+        <div class="border-t border-white/5 pt-3 flex items-center justify-between">
+          <span class="text-sm text-neutral-300 font-medium">Total</span>
+          <div class="text-right">
+            <span class="text-teal-light font-bold text-xl">${fmt(totalCents)}</span>
+            <span class="text-neutral-600 line-through ml-2 text-sm">${fmt(fullCents)}</span>
+          </div>
+        </div>
+        <p class="text-xs text-teal-light/80 text-right">Você economiza ${fmt(economiaCents)} (${comboPct}% OFF)</p>
+      </div>
 
-      <p class="text-xs text-neutral-500 uppercase tracking-widest mb-3">2 · Escolha seu produto Boris <span class="text-neutral-600 normal-case tracking-normal">(retira na barbearia)</span></p>
-      <div class="grid grid-cols-1 gap-2.5">${productCards}</div>
-
-      ${totalBox}
-
-      <button data-action="combo-continue" ${ready ? '' : 'disabled'}
-        class="w-full bg-teal hover:bg-teal-hover text-white font-bold tracking-widest uppercase px-8 py-4 rounded-md transition-colors duration-300 mt-5 disabled:opacity-40 disabled:cursor-not-allowed">
+      <button data-action="combo-continue"
+        class="w-full bg-teal hover:bg-teal-hover text-white font-bold tracking-widest uppercase px-8 py-4 rounded-md transition-colors duration-300 mt-5">
         Continuar
       </button>
 
@@ -296,7 +281,6 @@ function renderStep1Combo() {
     </div>`;
 }
 
-// ── Step 2: Barbeiros ─────────────────────────────────────────────────────────
 function renderStep2() {
   if (!selService) return;
   setProgress(2);
@@ -434,8 +418,8 @@ function renderStep4() {
 
   // Combo: preços com desconto e linha do produto a retirar.
   const isCombo    = comboMode && !!selProduct;
-  const svcCents   = isCombo ? applyComboDiscount(selService.priceCents) : selService.priceCents;
-  const prodCents  = isCombo ? applyComboDiscount(selProduct!.priceCents) : 0;
+  const svcCents   = isCombo ? applyDiscountPct(selService.priceCents, comboPct) : selService.priceCents;
+  const prodCents  = isCombo ? applyDiscountPct(selProduct!.priceCents, comboPct) : 0;
   const totalCents = svcCents + prodCents;
 
   const comboRows = isCombo ? `
@@ -445,7 +429,7 @@ function renderStep4() {
         </div>
         <div class="flex justify-between text-xs">
           <span class="text-teal-light/80">Combo Boris</span>
-          <span class="text-teal-light/80">${Math.round(COMBO_DISCOUNT_PCT * 100)}% OFF aplicado</span>
+          <span class="text-teal-light/80">${comboPct}% OFF aplicado</span>
         </div>` : '';
 
   wizard.innerHTML = `
@@ -577,7 +561,7 @@ async function handleSubmit(e: Event) {
         customerBirthdate: birthdate,
         startsAt:          selSlot!.utc,
         idempotencyKey:    idempotencyKey,
-        ...(comboMode && selProduct ? { combo: true, productSlug: selProduct.slug } : {}),
+        ...(comboMode && comboId ? { comboId } : {}),
       }),
     });
     const data = await res.json();
@@ -613,16 +597,6 @@ wizard.addEventListener('click', async (e) => {
   switch (action) {
     case 'retry':
       initStep1();
-      break;
-
-    case 'combo-select-service':
-      selService = services.find(s => s.id === id) ?? null;
-      renderStep1Combo();
-      break;
-
-    case 'combo-select-product':
-      selProduct = comboProducts().find(p => p.slug === slug) ?? null;
-      renderStep1Combo();
       break;
 
     case 'combo-continue':
@@ -677,22 +651,4 @@ wizard.addEventListener('click', async (e) => {
   }
 });
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-initStep1();
-</script>
-
-<style is:global>
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  .animate-fade-in {
-    animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
-</style>
+// ── Init ─────────────────────────

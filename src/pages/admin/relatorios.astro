@@ -4,7 +4,7 @@ export const prerender = false;
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import { getSession } from '../../lib/session.js';
 import { db } from '../../db/index.js';
-import { appointments, appointmentItems, barbers, services, workingHours, timeOff } from '../../db/schema.js';
+import { appointments, appointmentItems, barbers, services, workingHours, timeOff, productSales } from '../../db/schema.js';
 import { and, gte, lt, eq, ne, or, isNull } from 'drizzle-orm';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import { computeOccupancy } from '../../lib/occupancy.js';
@@ -64,9 +64,12 @@ const apptBarberCond = viewBarberId != null ? eq(appointments.barberId, viewBarb
 
 interface MonthMetrics {
   realizadoCents: number; previstoCents: number; abertoCents: number; perdidoCents: number;
+  // Receita realizada separada: serviços (corte/barba + extras da comanda) vs produtos (combo Boris).
+  servicoCents: number; produtoCents: number;
   completedCount: number; noShowCount: number; abertoCount: number;
   porBarbeiro: Map<string, number>;
   porServico: Map<string, { count: number; cents: number }>;
+  porProduto: Map<string, { count: number; cents: number }>;
   porHora: number[];
   monthPhones: Set<string>;
   occAppts: { barberId: number; startsAt: string; endsAt: string }[];
@@ -95,9 +98,11 @@ function loadMonth(ym: string): MonthMetrics {
     .all();
 
   let realizadoCents = 0, previstoCents = 0, abertoCents = 0, perdidoCents = 0;
+  let servicoCents = 0, produtoCents = 0;
   let completedCount = 0, noShowCount = 0, abertoCount = 0;
   const porBarbeiro = new Map<string, number>();
   const porServico  = new Map<string, { count: number; cents: number }>();
+  const porProduto  = new Map<string, { count: number; cents: number }>();
   const porHora: number[] = new Array(END_HOUR - START_HOUR + 1).fill(0);
   const monthPhones = new Set<string>();
   const occAppts: { barberId: number; startsAt: string; endsAt: string }[] = [];
@@ -114,6 +119,7 @@ function loadMonth(ym: string): MonthMetrics {
     }
     if (r.status === 'completed') {
       realizadoCents += r.priceCents;
+      servicoCents   += r.priceCents; // serviço principal = receita de serviço
       completedCount++;
       porBarbeiro.set(r.barberName, (porBarbeiro.get(r.barberName) ?? 0) + r.priceCents);
       const s = porServico.get(r.serviceName) ?? { count: 0, cents: 0 };
@@ -130,9 +136,10 @@ function loadMonth(ym: string): MonthMetrics {
     }
   }
 
-  // Extras da comanda, só de concluídos
+  // Itens (só de concluídos): serviceId NULL = produto do combo Boris;
+  // serviceId preenchido = serviço extra adicionado na comanda.
   const itemRows = db
-    .select({ name: appointmentItems.name, priceCents: appointmentItems.priceCents, barberName: barbers.name })
+    .select({ name: appointmentItems.name, priceCents: appointmentItems.priceCents, serviceId: appointmentItems.serviceId, barberName: barbers.name })
     .from(appointmentItems)
     .innerJoin(appointments, eq(appointments.id, appointmentItems.appointmentId))
     .innerJoin(barbers, eq(barbers.id, appointments.barberId))
@@ -142,17 +149,46 @@ function loadMonth(ym: string): MonthMetrics {
   for (const it of itemRows) {
     realizadoCents += it.priceCents;
     porBarbeiro.set(it.barberName, (porBarbeiro.get(it.barberName) ?? 0) + it.priceCents);
-    const s = porServico.get(it.name) ?? { count: 0, cents: 0 };
-    s.count++; s.cents += it.priceCents;
-    porServico.set(it.name, s);
+    if (it.serviceId == null) {
+      // Produto (combo Boris ou avulso)
+      produtoCents += it.priceCents;
+      const p = porProduto.get(it.name) ?? { count: 0, cents: 0 };
+      p.count++; p.cents += it.priceCents;
+      porProduto.set(it.name, p);
+    } else {
+      // Serviço extra da comanda
+      servicoCents += it.priceCents;
+      const s = porServico.get(it.name) ?? { count: 0, cents: 0 };
+      s.count++; s.cents += it.priceCents;
+      porServico.set(it.name, s);
+    }
   }
 
   const fechados = completedCount + noShowCount;
   const noShowRate = fechados ? Math.round((noShowCount / fechados) * 1000) / 10 : 0;
+  // Ticket médio considera só os atendimentos (não as vendas avulsas de produto).
   const ticketCents = completedCount ? Math.round(realizadoCents / completedCount) : 0;
 
-  return { realizadoCents, previstoCents, abertoCents, perdidoCents, completedCount, noShowCount,
-    abertoCount, porBarbeiro, porServico, porHora, monthPhones, occAppts, noShowRate, ticketCents };
+  // Vendas de produto avulsas (sem agendamento) — entram como produto realizado.
+  const saleRows = db
+    .select({ name: productSales.name, priceCents: productSales.priceCents, barberName: barbers.name })
+    .from(productSales)
+    .innerJoin(barbers, eq(barbers.id, productSales.barberId))
+    .where(and(gte(productSales.soldAt, start), lt(productSales.soldAt, end),
+      viewBarberId != null ? eq(productSales.barberId, viewBarberId) : undefined))
+    .all();
+  for (const sv of saleRows) {
+    realizadoCents += sv.priceCents;
+    produtoCents   += sv.priceCents;
+    porBarbeiro.set(sv.barberName, (porBarbeiro.get(sv.barberName) ?? 0) + sv.priceCents);
+    const p = porProduto.get(sv.name) ?? { count: 0, cents: 0 };
+    p.count++; p.cents += sv.priceCents;
+    porProduto.set(sv.name, p);
+  }
+
+  return { realizadoCents, previstoCents, abertoCents, perdidoCents, servicoCents, produtoCents,
+    completedCount, noShowCount, abertoCount, porBarbeiro, porServico, porProduto, porHora,
+    monthPhones, occAppts, noShowRate, ticketCents };
 }
 
 const cur  = loadMonth(mes);
@@ -264,6 +300,11 @@ const servicosRank = [...cur.porServico.entries()]
   .sort((a, b) => b.cents - a.cents)
   .slice(0, 6);
 
+const produtosRank = [...cur.porProduto.entries()]
+  .map(([name, v]) => ({ name, count: v.count, cents: v.cents }))
+  .sort((a, b) => b.cents - a.cents)
+  .slice(0, 6);
+
 const temDados = (cur.completedCount + cur.noShowCount + cur.abertoCount) > 0 || cur.previstoCents > 0 || clientesUnicos > 0;
 const tituloPainel = isAdmin ? 'Painel' : 'Seu desempenho';
 const subtitulo = isAdmin ? `${MESES[mm - 1]} de ${yy}` : `${barberRow.name.split(' ')[0]} · ${MESES[mm - 1]} de ${yy}`;
@@ -347,6 +388,18 @@ const geradoEm = formatInTimeZone(nowUtc, TZ, "dd/MM/yyyy 'às' HH:mm");
                   </span>
                 )}
               </p>
+              {cur.produtoCents > 0 && (
+                <div class="flex items-center gap-4 mt-3 pt-3 border-t border-white/10">
+                  <div>
+                    <p class="text-[10px] text-neutral-500 uppercase tracking-wider">Serviços</p>
+                    <p class="text-base font-semibold text-neutral-100 tabular-nums">{brl(cur.servicoCents)}</p>
+                  </div>
+                  <div>
+                    <p class="text-[10px] text-neutral-500 uppercase tracking-wider">Produtos</p>
+                    <p class="text-base font-semibold text-neutral-100 tabular-nums">{brl(cur.produtoCents)}</p>
+                  </div>
+                </div>
+              )}
             </div>
             {cur.previstoCents > 0 && (
               <div class="text-right shrink-0">
@@ -490,6 +543,22 @@ const geradoEm = formatInTimeZone(nowUtc, TZ, "dd/MM/yyyy 'às' HH:mm");
                   <span class="text-sm text-neutral-300 flex-1 min-w-0 truncate">{s.name}</span>
                   <span class="text-xs text-neutral-600 tabular-nums">{s.count}x</span>
                   <span class="text-sm font-medium text-teal-light tabular-nums w-20 text-right">{brl(s.cents)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {produtosRank.length > 0 && (
+          <section class="bg-dark-card border border-white/5 rounded-lg p-5">
+            <p class="text-xs text-neutral-500 uppercase tracking-widest mb-4">Produtos que mais faturam</p>
+            <div class="space-y-2.5">
+              {produtosRank.map((p, i) => (
+                <div class="flex items-baseline gap-3">
+                  <span class="text-xs text-neutral-600 tabular-nums w-4">{i + 1}</span>
+                  <span class="text-sm text-neutral-300 flex-1 min-w-0 truncate">{p.name}</span>
+                  <span class="text-xs text-neutral-600 tabular-nums">{p.count}x</span>
+                  <span class="text-sm font-medium text-teal-light tabular-nums w-20 text-right">{brl(p.cents)}</span>
                 </div>
               ))}
             </div>

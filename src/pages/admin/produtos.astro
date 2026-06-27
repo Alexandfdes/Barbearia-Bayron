@@ -1,0 +1,202 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { barbers, products } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+
+// Gerenciar o catálogo afeta o site público — restrito ao admin.
+if (session.role !== 'admin') return Astro.redirect('/admin');
+
+const list = db.select().from(products).orderBy(products.sortOrder, products.id).all();
+const brl = (c: number) => 'R$ ' + (c / 100).toFixed(2).replace('.', ',');
+const reais = (c: number) => (c / 100).toFixed(2);
+---
+
+<AdminLayout title="Produtos" barberName={barberRow.name} role={session.role}>
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-24">
+
+    <div class="flex items-center justify-between gap-3">
+      <div>
+        <h1 class="text-lg font-medium text-neutral-100">Produtos Boris</h1>
+        <p class="text-sm text-neutral-500 mt-1">O que você cadastrar aqui aparece no site, no combo e na venda.</p>
+      </div>
+      <button id="btn-add" class="shrink-0 flex items-center gap-2 bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest text-xs px-4 py-2.5 rounded transition-colors">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+        Adicionar
+      </button>
+    </div>
+
+    {list.length === 0 && (
+      <div class="bg-dark-card border border-white/5 rounded-lg py-12 text-center">
+        <p class="text-sm text-neutral-400">Nenhum produto cadastrado.</p>
+        <p class="text-xs text-neutral-600 mt-1">Clique em "Adicionar" para criar o primeiro.</p>
+      </div>
+    )}
+
+    <div class="space-y-2">
+      {list.map(p => (
+        <div class="flex items-center gap-3 bg-dark-card border border-white/5 rounded-lg p-3"
+             data-id={String(p.id)} data-name={p.name} data-desc={p.shortDesc ?? ''}
+             data-price={reais(p.priceCents)} data-active={String(p.active)} data-image={p.image ?? ''}>
+          <div class="w-14 h-14 shrink-0 rounded-md overflow-hidden bg-dark-surface border border-white/5">
+            {p.image
+              ? <img src={p.image} alt={p.name} class="w-full h-full object-cover" />
+              : <div class="w-full h-full flex items-center justify-center text-neutral-700 text-[10px]">sem foto</div>}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <p class="text-sm font-medium text-neutral-100 truncate">{p.name}</p>
+              {!p.active && <span class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700/50 text-neutral-400 shrink-0">inativo</span>}
+            </div>
+            <p class="text-xs text-neutral-500 truncate">{p.shortDesc}</p>
+            <p class="text-sm font-semibold text-teal-light tabular-nums mt-0.5">{brl(p.priceCents)}</p>
+          </div>
+          <div class="flex flex-col gap-1.5 shrink-0">
+            <button data-action="edit" class="text-[11px] px-2.5 py-1 rounded border border-white/10 hover:border-teal/30 text-neutral-300 hover:text-teal-light transition-colors">Editar</button>
+            <div class="flex gap-1.5">
+              <button data-action="toggle" class="flex-1 text-[11px] px-2 py-1 rounded border border-white/10 hover:border-white/20 text-neutral-400 transition-colors">{p.active ? 'Ocultar' : 'Ativar'}</button>
+              <button data-action="delete" class="text-[11px] px-2 py-1 rounded border border-red-500/20 hover:bg-red-500/10 text-red-400/80 transition-colors" aria-label="Excluir">✕</button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <!-- Modal add/editar -->
+    <div id="prod-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center px-4">
+      <div class="absolute inset-0 bg-black/70" data-close></div>
+      <div class="relative bg-dark-card border border-white/10 rounded-lg p-5 w-full max-w-sm space-y-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-neutral-200" id="modal-title">Novo produto</p>
+          <button type="button" data-close class="text-neutral-500 hover:text-neutral-300 text-xs">✕ fechar</button>
+        </div>
+        <input type="hidden" id="f-id" />
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome</label>
+          <input id="f-name" type="text" maxlength="100" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Descrição curta</label>
+          <textarea id="f-desc" rows="2" maxlength="300" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50 resize-none"></textarea>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Preço (R$)</label>
+          <input id="f-price" type="number" min="0" step="0.01" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50 tabular-nums" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Foto</label>
+          <div class="flex items-center gap-3">
+            <img id="f-preview" class="hidden w-14 h-14 rounded-md object-cover border border-white/5" />
+            <input id="f-image" type="file" accept="image/jpeg,image/png,image/webp" class="flex-1 text-xs text-neutral-400 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-teal/20 file:text-teal-light file:text-xs file:cursor-pointer" />
+          </div>
+          <p class="text-[10px] text-neutral-600 mt-1">JPG, PNG ou WEBP, até 5 MB.</p>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-neutral-300">
+          <input id="f-active" type="checkbox" checked class="accent-teal" /> Ativo (aparece no site)
+        </label>
+        <div id="modal-error" class="hidden text-red-400 text-xs text-center"></div>
+        <button id="f-save" type="button" class="w-full bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest text-xs py-3 rounded transition-colors disabled:opacity-50">Salvar</button>
+      </div>
+    </div>
+
+  </main>
+</AdminLayout>
+
+<script>
+  const modal   = document.getElementById('prod-modal') as HTMLElement;
+  const title   = document.getElementById('modal-title') as HTMLElement;
+  const fId     = document.getElementById('f-id') as HTMLInputElement;
+  const fName   = document.getElementById('f-name') as HTMLInputElement;
+  const fDesc   = document.getElementById('f-desc') as HTMLTextAreaElement;
+  const fPrice  = document.getElementById('f-price') as HTMLInputElement;
+  const fImage  = document.getElementById('f-image') as HTMLInputElement;
+  const fActive = document.getElementById('f-active') as HTMLInputElement;
+  const fPrev   = document.getElementById('f-preview') as HTMLImageElement;
+  const errEl   = document.getElementById('modal-error') as HTMLElement;
+  const saveBtn = document.getElementById('f-save') as HTMLButtonElement;
+
+  function openModal(edit?: { id: string; name: string; desc: string; price: string; active: boolean; image: string }) {
+    errEl.classList.add('hidden'); errEl.textContent = '';
+    fImage.value = '';
+    if (edit) {
+      title.textContent = 'Editar produto';
+      fId.value = edit.id; fName.value = edit.name; fDesc.value = edit.desc;
+      fPrice.value = edit.price; fActive.checked = edit.active;
+      if (edit.image) { fPrev.src = edit.image; fPrev.classList.remove('hidden'); }
+      else fPrev.classList.add('hidden');
+    } else {
+      title.textContent = 'Novo produto';
+      fId.value = ''; fName.value = ''; fDesc.value = ''; fPrice.value = ''; fActive.checked = true;
+      fPrev.classList.add('hidden');
+    }
+    modal.classList.remove('hidden');
+  }
+  function closeModal() { modal.classList.add('hidden'); }
+
+  document.getElementById('btn-add')?.addEventListener('click', () => openModal());
+  modal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeModal));
+
+  fImage.addEventListener('change', () => {
+    const f = fImage.files?.[0];
+    if (f) { fPrev.src = URL.createObjectURL(f); fPrev.classList.remove('hidden'); }
+  });
+
+  // Ações por card (editar / ativar / excluir)
+  document.querySelectorAll('[data-id]').forEach(card => {
+    const el = card as HTMLElement;
+    const id = el.dataset.id!;
+    el.querySelector('[data-action="edit"]')?.addEventListener('click', () => openModal({
+      id, name: el.dataset.name ?? '', desc: el.dataset.desc ?? '',
+      price: el.dataset.price ?? '', active: el.dataset.active === 'true', image: el.dataset.image ?? '',
+    }));
+    el.querySelector('[data-action="toggle"]')?.addEventListener('click', async () => {
+      const fd = new FormData(); fd.set('active', el.dataset.active === 'true' ? 'false' : 'true');
+      const res = await fetch(`/api/admin/products/${id}`, { method: 'PATCH', body: fd });
+      if (res.ok) location.reload();
+    });
+    el.querySelector('[data-action="delete"]')?.addEventListener('click', async () => {
+      if (!confirm(`Excluir "${el.dataset.name}"? Não dá pra desfazer.`)) return;
+      const res = await fetch(`/api/admin/products/${id}`, { method: 'DELETE' });
+      if (res.ok) location.reload();
+    });
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    errEl.classList.add('hidden');
+    const name = fName.value.trim();
+    const price = fPrice.value.trim();
+    if (name.length < 2) { errEl.textContent = 'Informe o nome'; errEl.classList.remove('hidden'); return; }
+    if (!price || parseFloat(price) < 0) { errEl.textContent = 'Informe o preço'; errEl.classList.remove('hidden'); return; }
+
+    const fd = new FormData();
+    fd.set('name', name);
+    fd.set('shortDesc', fDesc.value.trim());
+    fd.set('price', price);
+    fd.set('active', fActive.checked ? 'true' : 'false');
+    if (fImage.files?.[0]) fd.set('image', fImage.files[0]);
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Salvando...';
+    const id = fId.value;
+    const url = id ? `/api/admin/products/${id}` : '/api/admin/products';
+    const method = id ? 'PATCH' : 'POST';
+    try {
+      const res = await fetch(url, { method, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { location.reload(); return; }
+      errEl.textContent = data.error ?? 'Erro ao salvar'; errEl.classList.remove('hidden');
+    } catch {
+      errEl.textContent = 'Erro de conexão'; errEl.classList.remove('hidden');
+    }
+    saveBtn.disabled = false; saveBtn.textContent = 'Salvar';
+  });
+</script>

@@ -31,5 +31,8 @@ data/**/*.db
 data/**/*.db-shm
 data/**/*.db-wal
 
+# Uploads de imagens (conteúdo gerado pelo usuário)
+data/uploads/
+
 # Orçamentos e propostas comerciais
 orcamentos/

@@ -91,3 +91,55 @@ export const appointmentItems = sqliteTable('appointment_items', {
 }, (table) => [
   index('appt_items_appt_idx').on(table.appointmentId),
 ]);
+
+// Venda de produto avulsa — produto vendido no balcão SEM estar ligado a um
+// agendamento (ex.: cliente entra só pra comprar um óleo Boris). Entra no
+// faturamento como "produto". priceCents é o total da linha (quantidade × unitário).
+export const productSales = sqliteTable('product_sales', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  barberId: integer('barber_id').notNull().references(() => barbers.id),
+  name: text('name').notNull(),
+  quantity: integer('quantity').notNull().default(1),
+  priceCents: integer('price_cents').notNull(),
+  soldAt: text('sold_at').notNull(), // timestamp UTC ISO string
+  createdById: integer('created_by_id').notNull().references(() => barbers.id),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('product_sales_sold_at_idx').on(table.soldAt),
+  index('product_sales_barber_idx').on(table.barberId),
+]);
+
+// Catálogo de produtos (linha Boris) — gerenciável pelo barbeiro no admin.
+// Alimenta os cards da landing, o combo e a venda avulsa. image é um caminho:
+// /products/... (estático em public) ou /api/products/image/... (upload no volume).
+export const products = sqliteTable('products', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  shortDesc: text('short_desc'),
+  priceCents: integer('price_cents').notNull(),
+  image: text('image'),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('products_active_idx').on(table.active),
+]);
+
+// Combos do dia — gerenciáveis pelo barbeiro. Cada combo é um serviço + um produto
+// fixos, com desconto próprio (discountPct), e aparece nos dias marcados em `weekdays`
+// (bitmask: bit i = dia da semana i, 0=domingo … 6=sábado; 127 = todos os dias).
+export const combos = sqliteTable('combos', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  serviceId: integer('service_id').notNull().references(() => services.id),
+  productId: integer('product_id').notNull().references(() => products.id),
+  discountPct: integer('discount_pct').notNull().default(10),
+  weekdays: integer('weekdays').notNull().default(0),
+  image: text('image'),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('combos_active_idx').on(table.active),
+]);

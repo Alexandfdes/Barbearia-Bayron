@@ -1,111 +1,67 @@
 ---
-import { TOPSALAO_URL } from "../config";
-import { Image } from "astro:assets";
-import comboImg from "../assets/fotos-videos/carrosel7.jpg";
+// Combo do Dia — dinâmico. Busca /api/combos e mostra os combos marcados para
+// o dia da semana de hoje (weekdays bitmask). Se não houver, a seção fica oculta.
 ---
 
-<section id="combo" class="py-12 md:py-20 relative">
-  <div class="relative z-10 max-w-6xl mx-auto px-4">
-    <div
-      class="rounded-lg overflow-hidden border border-teal/20 bg-gradient-to-br from-neutral-900 via-neutral-950 to-neutral-900"
-    >
-      <div class="grid md:grid-cols-2">
-        <!-- Right: Info -->
-        <div class="p-4 sm:p-8 md:p-14 flex flex-col justify-center md:order-2">
-          <div class="flex flex-wrap items-center gap-4 mb-1">
-            <span
-              class="text-teal-light text-[10px] sm:text-xs font-medium tracking-[0.25em] uppercase"
-              >Promoção do Dia</span
-            >
-          </div>
-
-          <div class="flex flex-wrap items-center gap-3 mb-4 sm:mb-6">
-            <h2 class="font-serif text-2xl sm:text-3xl md:text-4xl font-medium text-white">
-              Combo Boris
-            </h2>
-            <span
-              class="bg-teal text-white text-[10px] sm:text-xs font-bold px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-sm uppercase tracking-wider"
-            >
-              10% OFF
-            </span>
-          </div>
-
-          <p class="text-neutral-300 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
-            Feche Cabelo + Barba e leve qualquer produto da linha Boris com
-            desconto no valor total.
-          </p>
-
-          <ul class="space-y-2.5 sm:space-y-3 mb-6 sm:mb-10">
-            {
-              [
-                "Degradê ou Social na régua",
-                "Barba alinhada na navalha",
-                "Produto Boris à sua escolha",
-              ].map((item) => (
-                <li class="flex items-center gap-3 text-neutral-200 text-xs sm:text-sm md:text-base">
-                  <svg
-                    class="w-4 h-4 text-teal-light shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    aria-hidden="true"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                  {item}
-                </li>
-              ))
-            }
-          </ul>
-
-          <a
-            href={`${TOPSALAO_URL}?combo=1`}
-            id="combo-boris-cta"
-            class="inline-flex items-center justify-center gap-3 bg-[#0f766e] hover:bg-[#0d9488] text-white font-bold text-xs sm:text-sm uppercase tracking-widest px-5 py-3 sm:px-10 sm:py-4 rounded-sm transition-colors duration-300 w-full max-w-[280px] sm:w-auto"
-          >
-            Agendar Combo
-            <svg
-              class="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2"
-              aria-hidden="true"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
-            </svg>
-          </a>
-        </div>
-
-        <!-- Left: Photo (hidden on mobile) -->
-        <div class="hidden md:block relative md:min-h-full md:order-1">
-          <Image
-            src={comboImg}
-            alt="Resultado do Combo Boris — Corte e Barba"
-            class="w-full h-full object-cover object-[center_35%] md:object-center"
-            loading="lazy"
-            widths={[600, 800, 1200]}
-            sizes="(max-width: 768px) 100vw, 50vw"
-          />
-          <div
-            class="hidden md:block absolute inset-0 bg-gradient-to-l from-neutral-950/40 to-transparent"
-          >
-          </div>
-          <div
-            class="absolute top-4 right-4 bg-teal text-white text-xs font-bold px-3 py-1.5 rounded-sm uppercase tracking-widest shadow-lg"
-          >
-            Mais Vendido
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+<section id="combo" class="py-12 md:py-20 relative" style="display:none">
+  <div class="relative z-10 max-w-6xl mx-auto px-4 space-y-6" id="combo-list"></div>
 </section>
+
+<script>
+  (async () => {
+    const section = document.getElementById("combo");
+    const listEl = document.getElementById("combo-list");
+    if (!section || !listEl) return;
+
+    const esc = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const fmt = (c: number) => { const r = c / 100; return Number.isInteger(r) ? `R$ ${r}` : `R$ ${r.toFixed(2).replace(".", ",")}`; };
+
+    try {
+      const res = await fetch("/api/combos");
+      const all = res.ok ? await res.json() : [];
+      const today = new Date().getDay(); // 0=dom … 6=sáb
+      const items = (all as any[]).filter((c) => (c.weekdays & (1 << today)) !== 0);
+      if (items.length === 0) return; // seção continua oculta
+
+      listEl.innerHTML = items.map((c) => {
+        const photo = c.image
+          ? `<div class="hidden md:block relative md:min-h-full md:order-1">
+               <img src="${esc(c.image)}" alt="${esc(c.name)}" loading="lazy" class="w-full h-full object-cover" />
+               <div class="absolute inset-0 bg-gradient-to-l from-neutral-950/40 to-transparent"></div>
+             </div>`
+          : "";
+        return `
+          <div class="rounded-lg overflow-hidden border border-teal/20 bg-gradient-to-br from-neutral-900 via-neutral-950 to-neutral-900">
+            <div class="grid md:grid-cols-2">
+              <div class="p-4 sm:p-8 md:p-14 flex flex-col justify-center md:order-2">
+                <span class="text-teal-light text-[10px] sm:text-xs font-medium tracking-[0.25em] uppercase mb-1">Promoção do Dia</span>
+                <div class="flex flex-wrap items-center gap-3 mb-4 sm:mb-6">
+                  <h2 class="font-serif text-2xl sm:text-3xl md:text-4xl font-medium text-white">${esc(c.name)}</h2>
+                  <span class="bg-teal text-white text-[10px] sm:text-xs font-bold px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-sm uppercase tracking-wider">${c.discountPct}% OFF</span>
+                </div>
+                <p class="text-neutral-300 text-sm sm:text-base mb-4 leading-relaxed">
+                  Feche <strong class="text-white">${esc(c.serviceName)}</strong> e leve <strong class="text-white">${esc(c.productName)}</strong> com ${c.discountPct}% de desconto.
+                </p>
+                <div class="flex items-baseline gap-3 mb-6 sm:mb-8">
+                  <span class="text-teal-light font-bold text-2xl sm:text-3xl tabular-nums">${fmt(c.totalDiscountedCents)}</span>
+                  <span class="text-neutral-600 line-through text-base tabular-nums">${fmt(c.totalFullCents)}</span>
+                </div>
+                <a href="/agendar?combo=${c.id}"
+                   class="inline-flex items-center justify-center gap-3 bg-[#0f766e] hover:bg-[#0d9488] text-white font-bold text-xs sm:text-sm uppercase tracking-widest px-5 py-3 sm:px-10 sm:py-4 rounded-sm transition-colors duration-300 w-full max-w-[280px] sm:w-auto">
+                  Agendar Combo
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+                  </svg>
+                </a>
+              </div>
+              ${photo}
+            </div>
+          </div>`;
+      }).join("");
+
+      section.style.display = "";
+    } catch {
+      /* falhou: seção fica oculta */
+    }
+  })();
+</script>

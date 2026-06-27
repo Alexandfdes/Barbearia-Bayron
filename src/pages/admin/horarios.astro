@@ -27,14 +27,13 @@ let selectedBarberId = isAdmin
   ? (barberParam ? parseInt(barberParam, 10) : allBarbers[0]?.id ?? session.barberId)
   : session.barberId;
 
-// Validar que o barbeiro selecionado existe na lista
 if (!allBarbers.some(b => b.id === selectedBarberId)) {
   selectedBarberId = allBarbers[0]?.id ?? session.barberId;
 }
 
 const selectedBarber = allBarbers.find(b => b.id === selectedBarberId);
 
-// Carrega os horários atuais do barbeiro selecionado
+// Carrega todas as janelas do barbeiro (pode haver mais de uma por dia: manhã + tarde)
 const currentHours = db.select({
   weekday:   workingHours.weekday,
   startTime: workingHours.startTime,
@@ -42,44 +41,59 @@ const currentHours = db.select({
 })
   .from(workingHours)
   .where(eq(workingHours.barberId, selectedBarberId))
-  .orderBy(workingHours.weekday)
   .all();
 
-// Monta um mapa weekday → horários, preenchendo dias vazios como "desabilitado"
 const WEEKDAY_LABELS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const WEEKDAY_SHORT  = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
+// Padrões dos turnos quando o dia ainda não tem horário configurado.
+const DEFAULT_MANHA = { start: '08:00', end: '11:00' };
+const DEFAULT_TARDE = { start: '14:00', end: '19:00' };
+
+interface Shift { enabled: boolean; start: string; end: string; }
 interface DayConfig {
   weekday: number;
   label: string;
   short: string;
-  enabled: boolean;
-  startTime: string;
-  endTime: string;
+  manha: Shift;
+  tarde: Shift;
 }
 
-const hoursMap = new Map(currentHours.map(h => [h.weekday, h]));
+// Agrupa janelas por dia, ordenadas por horário de início.
+const windowsByDay = new Map<number, { start: string; end: string }[]>();
+for (const h of currentHours) {
+  const arr = windowsByDay.get(h.weekday) ?? [];
+  arr.push({ start: h.startTime, end: h.endTime });
+  windowsByDay.set(h.weekday, arr);
+}
+for (const arr of windowsByDay.values()) arr.sort((a, b) => a.start.localeCompare(b.start));
 
-const weekGrid: DayConfig[] = Array.from({ length: 7 }, (_, i) => {
-  const existing = hoursMap.get(i);
-  return {
-    weekday:   i,
-    label:     WEEKDAY_LABELS[i],
-    short:     WEEKDAY_SHORT[i],
-    enabled:   !!existing,
-    startTime: existing?.startTime ?? '09:00',
-    endTime:   existing?.endTime   ?? '19:00',
-  };
-});
+// 1ª janela do dia → manhã; 2ª janela → tarde. Quem não tem janela usa o padrão (desligado).
+function buildDay(i: number): DayConfig {
+  const wins = windowsByDay.get(i) ?? [];
+  const manha: Shift = wins[0]
+    ? { enabled: true, start: wins[0].start, end: wins[0].end }
+    : { enabled: false, ...DEFAULT_MANHA };
+  const tarde: Shift = wins[1]
+    ? { enabled: true, start: wins[1].start, end: wins[1].end }
+    : { enabled: false, ...DEFAULT_TARDE };
+  return { weekday: i, label: WEEKDAY_LABELS[i], short: WEEKDAY_SHORT[i], manha, tarde };
+}
 
-// Reordena pra começar na segunda (1,2,3,4,5,6,0)
+const weekGrid: DayConfig[] = Array.from({ length: 7 }, (_, i) => buildDay(i));
+// Reordena pra começar na segunda (1..6, 0)
 const orderedGrid = [...weekGrid.slice(1), weekGrid[0]];
 
-const clientData = {
-  selectedBarberId,
-  isAdmin,
-  allBarbers,
-};
+function summaryText(day: DayConfig): string {
+  const parts: string[] = [];
+  if (day.manha.enabled) parts.push(`${day.manha.start}–${day.manha.end}`);
+  if (day.tarde.enabled) parts.push(`${day.tarde.start}–${day.tarde.end}`);
+  return parts.length ? parts.join(' · ') : 'Folga';
+}
+
+const configuredDays = weekGrid.filter(d => d.manha.enabled || d.tarde.enabled).length;
+
+const clientData = { selectedBarberId, isAdmin };
 ---
 
 <AdminLayout title="Horários" barberName={barberRow.name} role={session.role}>
@@ -89,8 +103,8 @@ const clientData = {
       <h1 class="text-lg font-medium text-neutral-100">Horários de Expediente</h1>
       <p class="text-sm text-neutral-500 mt-1">
         {isAdmin
-          ? 'Defina o horário de funcionamento de cada barbeiro por dia da semana.'
-          : 'Configure seus horários de trabalho por dia da semana.'}
+          ? 'Defina os turnos de cada barbeiro por dia. Você pode ter manhã e tarde com um intervalo no meio.'
+          : 'Configure seus turnos de trabalho por dia. Você pode separar manhã e tarde com um intervalo no meio.'}
       </p>
     </div>
 
@@ -117,102 +131,92 @@ const clientData = {
         <div class="w-10 h-10 bg-teal/15 border border-teal/30 rounded-full flex items-center justify-center text-teal-light text-sm font-bold">
           {(selectedBarber?.name ?? '?')[0].toUpperCase()}
         </div>
-        <div>
+        <div class="flex-1 min-w-0">
           <p class="text-sm font-medium text-neutral-100">{selectedBarber?.name ?? 'Barbeiro'}</p>
-          <p class="text-xs text-neutral-500">
-            {currentHours.length} {currentHours.length === 1 ? 'dia configurado' : 'dias configurados'}
+          <p class="text-xs text-neutral-500" id="configured-count">
+            {configuredDays} {configuredDays === 1 ? 'dia configurado' : 'dias configurados'}
           </p>
         </div>
+        <button
+          type="button"
+          id="fill-default"
+          class="text-[11px] px-3 py-2 rounded border border-teal/30 text-teal-light hover:bg-teal/10 transition-colors text-right leading-tight"
+        >
+          Preencher Seg–Sáb<br />Manhã 08–11 · Tarde 14–19
+        </button>
       </div>
     </div>
 
     <!-- Grid de horários -->
     <form id="hours-form" class="space-y-2">
-
-      <!-- Grid mobile: cards empilhados -->
       <div class="space-y-2">
-        {orderedGrid.map(day => (
-          <div class:list={[
-            'bg-dark-card border rounded-lg transition-colors',
-            day.enabled ? 'border-white/5' : 'border-white/[0.03] opacity-60'
-          ]}
-               data-day={String(day.weekday)}>
+        {orderedGrid.map(day => {
+          const anyOn = day.manha.enabled || day.tarde.enabled;
+          const shifts = [
+            { period: 'manha', label: 'Manhã', shift: day.manha },
+            { period: 'tarde', label: 'Tarde', shift: day.tarde },
+          ];
+          return (
+            <div class:list={[
+              'bg-dark-card border rounded-lg transition-colors',
+              anyOn ? 'border-white/5' : 'border-white/[0.03] opacity-60'
+            ]} data-day={String(day.weekday)}>
 
-            <div class="flex items-center gap-3 px-4 py-3">
-              <!-- Toggle ativo -->
-              <button
-                type="button"
-                data-toggle-day={String(day.weekday)}
-                data-enabled={String(day.enabled)}
-                class:list={[
-                  'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors',
-                  day.enabled ? 'bg-teal' : 'bg-neutral-700'
-                ]}
-                aria-label={`Toggle ${day.label}`}
-              >
-                <span class:list={[
-                  'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform',
-                  day.enabled ? 'translate-x-5' : 'translate-x-0.5'
-                ]} />
-              </button>
-
-              <!-- Nome do dia -->
-              <div class="flex-1 min-w-0">
-                <p class:list={[
-                  'text-sm font-medium',
-                  day.enabled ? 'text-neutral-100' : 'text-neutral-500'
-                ]}>
-                  {day.label}
-                </p>
-                <p class="text-[10px] text-neutral-600 sm:hidden">
-                  {day.enabled ? `${day.startTime} – ${day.endTime}` : 'Folga'}
+              <div class="flex items-center justify-between px-4 pt-3 pb-1 gap-3">
+                <p class="text-sm font-medium text-neutral-100">{day.label}</p>
+                <p class="text-[11px] text-neutral-500 tabular-nums truncate" data-summary={String(day.weekday)}>
+                  {summaryText(day)}
                 </p>
               </div>
 
-              <!-- Inputs de horário (desktop: inline) -->
-              <div class:list={[
-                'hidden sm:flex items-center gap-2 transition-opacity',
-                !day.enabled && 'opacity-30 pointer-events-none'
-              ]}>
-                <input
-                  type="time"
-                  data-start={String(day.weekday)}
-                  value={day.startTime}
-                  disabled={!day.enabled}
-                  class="w-28 bg-dark-surface border border-white/10 rounded px-2 py-1.5 text-xs text-neutral-200 text-center focus:outline-none focus:border-teal/50 disabled:cursor-not-allowed tabular-nums"
-                />
-                <span class="text-neutral-600 text-xs">→</span>
-                <input
-                  type="time"
-                  data-end={String(day.weekday)}
-                  value={day.endTime}
-                  disabled={!day.enabled}
-                  class="w-28 bg-dark-surface border border-white/10 rounded px-2 py-1.5 text-xs text-neutral-200 text-center focus:outline-none focus:border-teal/50 disabled:cursor-not-allowed tabular-nums"
-                />
+              <div class="px-4 pb-3 space-y-2">
+                {shifts.map(s => (
+                  <div class="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      data-shift-toggle
+                      data-weekday={String(day.weekday)}
+                      data-period={s.period}
+                      aria-pressed={String(s.shift.enabled)}
+                      aria-label={`${s.label} ${day.label}`}
+                      class:list={[
+                        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+                        s.shift.enabled ? 'bg-teal' : 'bg-neutral-700'
+                      ]}
+                    >
+                      <span class:list={[
+                        'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                        s.shift.enabled ? 'translate-x-4' : 'translate-x-0.5'
+                      ]} />
+                    </button>
+
+                    <span class="w-12 shrink-0 text-xs text-neutral-400">{s.label}</span>
+
+                    <input
+                      type="time"
+                      data-shift-start
+                      data-weekday={String(day.weekday)}
+                      data-period={s.period}
+                      value={s.shift.start}
+                      disabled={!s.shift.enabled}
+                      class="w-28 bg-dark-surface border border-white/10 rounded px-2 py-1.5 text-xs text-neutral-200 text-center focus:outline-none focus:border-teal/50 disabled:opacity-40 disabled:cursor-not-allowed tabular-nums"
+                    />
+                    <span class="text-neutral-600 text-xs">→</span>
+                    <input
+                      type="time"
+                      data-shift-end
+                      data-weekday={String(day.weekday)}
+                      data-period={s.period}
+                      value={s.shift.end}
+                      disabled={!s.shift.enabled}
+                      class="w-28 bg-dark-surface border border-white/10 rounded px-2 py-1.5 text-xs text-neutral-200 text-center focus:outline-none focus:border-teal/50 disabled:opacity-40 disabled:cursor-not-allowed tabular-nums"
+                    />
+                  </div>
+                ))}
               </div>
             </div>
-
-            <!-- Inputs de horário (mobile: abaixo do nome) -->
-            {day.enabled && (
-              <div class="sm:hidden px-4 pb-3 flex items-center gap-2"
-                   data-mobile-inputs={String(day.weekday)}>
-                <input
-                  type="time"
-                  data-start-mobile={String(day.weekday)}
-                  value={day.startTime}
-                  class="flex-1 bg-dark-surface border border-white/10 rounded px-2 py-2 text-sm text-neutral-200 text-center focus:outline-none focus:border-teal/50 tabular-nums"
-                />
-                <span class="text-neutral-600 text-xs">→</span>
-                <input
-                  type="time"
-                  data-end-mobile={String(day.weekday)}
-                  value={day.endTime}
-                  class="flex-1 bg-dark-surface border border-white/10 rounded px-2 py-2 text-sm text-neutral-200 text-center focus:outline-none focus:border-teal/50 tabular-nums"
-                />
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <!-- Feedback + botão salvar -->
@@ -231,169 +235,140 @@ const clientData = {
       </div>
     </form>
 
-    <!-- Resumo visual -->
-    <section class="bg-dark-card border border-white/5 rounded-lg p-4">
-      <p class="text-[10px] text-neutral-500 uppercase tracking-widest mb-3">Resumo da semana</p>
-      <div class="grid grid-cols-7 gap-1" id="week-summary">
-        {orderedGrid.map(day => (
-          <div class="text-center" data-summary-day={String(day.weekday)}>
-            <p class:list={[
-              'text-[10px] uppercase tracking-wider mb-1',
-              day.enabled ? 'text-neutral-400' : 'text-neutral-700'
-            ]}>
-              {day.short}
-            </p>
-            <div class:list={[
-              'rounded py-2 px-1',
-              day.enabled ? 'bg-teal/10 border border-teal/20' : 'bg-white/[0.02] border border-white/5'
-            ]}>
-              {day.enabled ? (
-                <div>
-                  <p class="text-[10px] text-teal-light tabular-nums font-medium">{day.startTime}</p>
-                  <p class="text-[10px] text-neutral-600 my-0.5">→</p>
-                  <p class="text-[10px] text-teal-light tabular-nums font-medium">{day.endTime}</p>
-                </div>
-              ) : (
-                <p class="text-[10px] text-neutral-700">—</p>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-
   </main>
 </AdminLayout>
 
 <script define:vars={{ clientData }}>
-  const { selectedBarberId, isAdmin } = clientData;
+  const { selectedBarberId } = clientData;
+  const WD = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const PERIODS = ['manha', 'tarde'];
 
-  // ── Toggle dia ativo/inativo ──────────────────────────────────────────────────
-  document.querySelectorAll('[data-toggle-day]').forEach(btn => {
+  function shiftEls(weekday, period) {
+    const sel = `[data-weekday="${weekday}"][data-period="${period}"]`;
+    return {
+      toggle: document.querySelector(`[data-shift-toggle]${sel}`),
+      start:  document.querySelector(`[data-shift-start]${sel}`),
+      end:    document.querySelector(`[data-shift-end]${sel}`),
+    };
+  }
+
+  function isOn(toggle) {
+    return toggle?.getAttribute('aria-pressed') === 'true';
+  }
+
+  function setShift(weekday, period, on) {
+    const { toggle, start, end } = shiftEls(weekday, period);
+    if (!toggle) return;
+    toggle.setAttribute('aria-pressed', String(on));
+    toggle.classList.toggle('bg-teal', on);
+    toggle.classList.toggle('bg-neutral-700', !on);
+    const thumb = toggle.querySelector('span');
+    thumb?.classList.toggle('translate-x-4', on);
+    thumb?.classList.toggle('translate-x-0.5', !on);
+    if (start) start.disabled = !on;
+    if (end) end.disabled = !on;
+    refreshDay(weekday);
+  }
+
+  function refreshDay(weekday) {
+    const card = document.querySelector(`[data-day="${weekday}"]`);
+    if (!card) return;
+    const m = shiftEls(weekday, 'manha');
+    const t = shiftEls(weekday, 'tarde');
+    const mOn = isOn(m.toggle);
+    const tOn = isOn(t.toggle);
+    const anyOn = mOn || tOn;
+
+    card.classList.toggle('opacity-60', !anyOn);
+    card.classList.toggle('border-white/5', anyOn);
+    card.classList.toggle('border-white/[0.03]', !anyOn);
+
+    const summary = card.querySelector(`[data-summary="${weekday}"]`);
+    if (summary) {
+      const parts = [];
+      if (mOn && m.start && m.end) parts.push(`${m.start.value}–${m.end.value}`);
+      if (tOn && t.start && t.end) parts.push(`${t.start.value}–${t.end.value}`);
+      summary.textContent = parts.length ? parts.join(' · ') : 'Folga';
+    }
+    updateConfiguredCount();
+  }
+
+  function updateConfiguredCount() {
+    let n = 0;
+    for (let wd = 0; wd <= 6; wd++) {
+      if (isOn(shiftEls(wd, 'manha').toggle) || isOn(shiftEls(wd, 'tarde').toggle)) n++;
+    }
+    const el = document.getElementById('configured-count');
+    if (el) el.textContent = `${n} ${n === 1 ? 'dia configurado' : 'dias configurados'}`;
+  }
+
+  // Toggles dos turnos
+  document.querySelectorAll('[data-shift-toggle]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const weekday   = btn.dataset.toggleDay;
-      const wasActive = btn.dataset.enabled === 'true';
-      const nowActive = !wasActive;
-
-      btn.dataset.enabled = String(nowActive);
-      btn.classList.toggle('bg-teal', nowActive);
-      btn.classList.toggle('bg-neutral-700', !nowActive);
-
-      const thumb = btn.querySelector('span');
-      thumb?.classList.toggle('translate-x-5', nowActive);
-      thumb?.classList.toggle('translate-x-0.5', !nowActive);
-
-      // Atualiza card
-      const card = document.querySelector(`[data-day="${weekday}"]`);
-      card?.classList.toggle('opacity-60', !nowActive);
-      card?.classList.toggle('border-white/5', nowActive);
-      card?.classList.toggle('border-white/[0.03]', !nowActive);
-
-      // Nome do dia
-      const nameEl = card?.querySelector('p.text-sm');
-      nameEl?.classList.toggle('text-neutral-100', nowActive);
-      nameEl?.classList.toggle('text-neutral-500', !nowActive);
-
-      // Desktop inputs
-      const desktopWrap = card?.querySelector('.sm\\:flex');
-      desktopWrap?.classList.toggle('opacity-30', !nowActive);
-      desktopWrap?.classList.toggle('pointer-events-none', !nowActive);
-      card?.querySelectorAll(`[data-start="${weekday}"], [data-end="${weekday}"]`).forEach(input => {
-        input.disabled = !nowActive;
-      });
-
-      // Mobile inputs
-      const mobileWrap = card?.querySelector(`[data-mobile-inputs="${weekday}"]`);
-      if (mobileWrap) {
-        if (nowActive) {
-          mobileWrap.classList.remove('hidden');
-        } else {
-          mobileWrap.classList.add('hidden');
-        }
-      }
-
-      // Mobile label
-      const mobileLabel = card?.querySelector('.sm\\:hidden.text-\\[10px\\]');
-      if (mobileLabel) {
-        const startVal = card.querySelector(`[data-start="${weekday}"]`)?.value ?? '09:00';
-        const endVal   = card.querySelector(`[data-end="${weekday}"]`)?.value ?? '19:00';
-        mobileLabel.textContent = nowActive ? `${startVal} – ${endVal}` : 'Folga';
-      }
+      setShift(btn.dataset.weekday, btn.dataset.period, !isOn(btn));
     });
   });
 
-  // ── Sincronizar inputs desktop ↔ mobile ────────────────────────────────────
-  document.querySelectorAll('[data-start-mobile]').forEach(input => {
-    const weekday = input.dataset.startMobile;
-    input.addEventListener('change', () => {
-      const desktop = document.querySelector(`[data-start="${weekday}"]`);
-      if (desktop) desktop.value = input.value;
-    });
-  });
-  document.querySelectorAll('[data-end-mobile]').forEach(input => {
-    const weekday = input.dataset.endMobile;
-    input.addEventListener('change', () => {
-      const desktop = document.querySelector(`[data-end="${weekday}"]`);
-      if (desktop) desktop.value = input.value;
-    });
-  });
-  document.querySelectorAll('[data-start]').forEach(input => {
-    if (!input.dataset.start) return;
-    const weekday = input.dataset.start;
-    input.addEventListener('change', () => {
-      const mobile = document.querySelector(`[data-start-mobile="${weekday}"]`);
-      if (mobile) mobile.value = input.value;
-    });
-  });
-  document.querySelectorAll('[data-end]').forEach(input => {
-    if (!input.dataset.end) return;
-    const weekday = input.dataset.end;
-    input.addEventListener('change', () => {
-      const mobile = document.querySelector(`[data-end-mobile="${weekday}"]`);
-      if (mobile) mobile.value = input.value;
-    });
+  // Mudou um horário → atualiza o resumo do dia
+  document.querySelectorAll('[data-shift-start], [data-shift-end]').forEach(inp => {
+    inp.addEventListener('change', () => refreshDay(inp.dataset.weekday));
   });
 
-  // ── Salvar ──────────────────────────────────────────────────────────────────
+  // Preencher padrão Seg–Sáb (manhã 08–11 / tarde 14–19), domingo de folga
+  document.getElementById('fill-default')?.addEventListener('click', () => {
+    for (let wd = 1; wd <= 6; wd++) {
+      const m = shiftEls(wd, 'manha');
+      const t = shiftEls(wd, 'tarde');
+      if (m.start) m.start.value = '08:00';
+      if (m.end)   m.end.value   = '11:00';
+      if (t.start) t.start.value = '14:00';
+      if (t.end)   t.end.value   = '19:00';
+      setShift(wd, 'manha', true);
+      setShift(wd, 'tarde', true);
+    }
+    setShift(0, 'manha', false);
+    setShift(0, 'tarde', false);
+  });
+
+  // Salvar
   const form     = document.getElementById('hours-form');
   const saveBtn  = document.getElementById('save-btn');
   const feedback = document.getElementById('save-feedback');
 
+  function fail(msg) {
+    feedback.textContent = `✕ ${msg}`;
+    feedback.className = 'text-xs text-red-400';
+  }
+
   form?.addEventListener('submit', async (e) => {
     e.preventDefault();
+    feedback.textContent = '';
 
-    // Coleta os dados
     const hours = [];
-    document.querySelectorAll('[data-toggle-day]').forEach(toggle => {
-      if (toggle.dataset.enabled !== 'true') return;
-      const weekday = parseInt(toggle.dataset.toggleDay, 10);
-      // Prefere desktop, fallback mobile
-      const startEl = document.querySelector(`[data-start="${weekday}"]`) ||
-                      document.querySelector(`[data-start-mobile="${weekday}"]`);
-      const endEl   = document.querySelector(`[data-end="${weekday}"]`) ||
-                      document.querySelector(`[data-end-mobile="${weekday}"]`);
-      if (!startEl?.value || !endEl?.value) return;
-
-      hours.push({
-        weekday,
-        startTime: startEl.value,
-        endTime:   endEl.value,
-      });
-    });
-
-    // Validação client-side
-    for (const h of hours) {
-      if (h.startTime >= h.endTime) {
-        const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-        feedback.textContent = `${dayNames[h.weekday]}: horário de início deve ser antes do fim`;
-        feedback.className = 'text-xs text-red-400';
-        return;
+    for (let wd = 0; wd <= 6; wd++) {
+      const dayWindows = [];
+      for (const period of PERIODS) {
+        const { toggle, start, end } = shiftEls(wd, period);
+        if (!isOn(toggle)) continue;
+        const s = start?.value, en = end?.value;
+        if (!s || !en) continue;
+        if (s >= en) {
+          return fail(`${WD[wd]} (${period === 'manha' ? 'manhã' : 'tarde'}): início deve ser antes do fim`);
+        }
+        dayWindows.push({ weekday: wd, startTime: s, endTime: en });
       }
+      // Turnos do mesmo dia não podem se sobrepor
+      if (dayWindows.length === 2) {
+        const sorted = [...dayWindows].sort((a, b) => a.startTime.localeCompare(b.startTime));
+        if (sorted[0].endTime > sorted[1].startTime) {
+          return fail(`${WD[wd]}: manhã e tarde não podem se sobrepor`);
+        }
+      }
+      hours.push(...dayWindows);
     }
 
     saveBtn.disabled = true;
     saveBtn.textContent = 'Salvando...';
-    feedback.textContent = '';
 
     try {
       const res = await fetch('/api/admin/working-hours', {
@@ -404,17 +379,14 @@ const clientData = {
       const data = await res.json();
 
       if (res.ok) {
-        feedback.textContent = `✓ Salvo — ${data.saved} ${data.saved === 1 ? 'dia' : 'dias'} configurados`;
+        feedback.textContent = '✓ Horários salvos';
         feedback.className = 'text-xs text-teal-light';
-        // Recarrega pra atualizar o resumo visual
-        setTimeout(() => location.reload(), 800);
+        setTimeout(() => location.reload(), 700);
       } else {
-        feedback.textContent = `✕ ${data.error ?? 'Erro ao salvar'}`;
-        feedback.className = 'text-xs text-red-400';
+        fail(data.error ?? 'Erro ao salvar');
       }
     } catch {
-      feedback.textContent = '✕ Erro de conexão';
-      feedback.className = 'text-xs text-red-400';
+      fail('Erro de conexão');
     }
 
     saveBtn.disabled = false;

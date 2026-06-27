@@ -24,18 +24,18 @@ if (!barberRow) return Astro.redirect('/admin/login');
   <main class="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-20">
 
     <section>
-      <label for="phone-input" class="block text-xs text-neutral-500 uppercase tracking-widest mb-2">
-        Telefone do cliente
+      <label for="search-input" class="block text-xs text-neutral-500 uppercase tracking-widest mb-2">
+        Telefone ou nome do cliente
       </label>
       <input
-        id="phone-input"
-        type="tel"
+        id="search-input"
+        type="text"
         autocomplete="off"
-        placeholder="Digite o telefone (4+ dígitos)"
+        placeholder="Digite o telefone ou o nome"
         class="w-full bg-dark-surface border border-white/10 rounded px-4 py-3 text-base text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-teal/50"
       />
       <p id="hint" class="text-xs text-neutral-500 mt-2">
-        Use esta busca para achar o agendamento de um cliente que perdeu o link.
+        Busque por telefone (4+ dígitos) ou nome (2+ letras) — útil quando o cliente perdeu o link.
       </p>
     </section>
 
@@ -46,7 +46,7 @@ if (!barberRow) return Astro.redirect('/admin/login');
       </div>
 
       <div id="empty-state" class="bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
-        <p class="text-neutral-500 text-sm">Digite o telefone para começar.</p>
+        <p class="text-neutral-500 text-sm">Digite o telefone ou o nome para começar.</p>
       </div>
 
       <div id="loading" class="hidden bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
@@ -68,7 +68,7 @@ if (!barberRow) return Astro.redirect('/admin/login');
     no_show:   { text: '✗ No-show',    cls: 'text-yellow-500',   border: 'border-yellow-500/15'  },
   };
 
-  const inputEl   = document.getElementById('phone-input') as HTMLInputElement | null;
+  const inputEl   = document.getElementById('search-input') as HTMLInputElement | null;
   const hintEl    = document.getElementById('hint');
   const emptyEl   = document.getElementById('empty-state');
   const loadingEl = document.getElementById('loading');
@@ -109,7 +109,7 @@ if (!barberRow) return Astro.redirect('/admin/login');
     if (results.length === 0) {
       resultsEl!.innerHTML = `
         <div class="bg-dark-card border border-white/5 rounded-md px-5 py-10 text-center">
-          <p class="text-neutral-500 text-sm">Nenhum agendamento encontrado para esse telefone.</p>
+          <p class="text-neutral-500 text-sm">Nenhum agendamento encontrado para essa busca.</p>
         </div>`;
       countEl!.textContent = '';
       return;
@@ -145,21 +145,26 @@ if (!barberRow) return Astro.redirect('/admin/login');
     }).join('');
   }
 
-  async function search(phoneRaw: string) {
-    const digits = phoneRaw.replace(/\D/g, '');
-    if (digits.length < 4) {
+  async function search(raw: string) {
+    const q          = raw.trim();
+    const digits     = q.replace(/\D/g, '');
+    const hasLetters = /[a-zA-ZÀ-ÿ]/.test(q);
+    const okPhone    = digits.length >= 4;
+    const okName     = hasLetters && q.length >= 2;
+
+    if (!okPhone && !okName) {
       showState('empty');
       countEl!.textContent = '';
-      hintEl!.textContent = 'Use esta busca para achar o agendamento de um cliente que perdeu o link.';
+      hintEl!.textContent = 'Busque por telefone (4+ dígitos) ou nome (2+ letras) — útil quando o cliente perdeu o link.';
       return;
     }
 
-    hintEl!.textContent = `Buscando por ${digits.length} dígitos: ${digits}`;
+    hintEl!.textContent = okName ? `Buscando por nome: ${q}` : `Buscando por telefone: ${digits}`;
     showState('loading');
 
     const reqId = ++lastReqId;
     try {
-      const res  = await fetch(`/api/admin/appointments/search?phone=${encodeURIComponent(digits)}`);
+      const res  = await fetch(`/api/admin/appointments/search?q=${encodeURIComponent(q)}`);
       if (reqId !== lastReqId) return; // resposta velha, ignora
       if (!res.ok) {
         resultsEl!.innerHTML = `

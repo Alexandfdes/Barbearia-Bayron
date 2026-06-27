@@ -36,6 +36,27 @@
       "when": 1781137000000,
       "tag": "0004_normalize_customer_phone",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1782438673366,
+      "tag": "0005_product_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1782523595257,
+      "tag": "0006_products",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1782525791980,
+      "tag": "0007_combos",
+      "breakpoints": true
     }
   ]
 }

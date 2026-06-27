@@ -3,9 +3,9 @@ import { addMinutes } from 'date-fns';
 import { fromZonedTime } from 'date-fns-tz';
 import { and, eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { barbers, barberServices, services, workingHours } from '../db/schema.js';
+import { barbers, barberServices, products, services, workingHours } from '../db/schema.js';
 import { normalizePhone } from './phone.js';
-import { isComboEligibleSlug, applyComboDiscount, findComboProduct } from './combo.js';
+import { applyDiscountPct } from './combo.js';
 
 const TZ = 'America/Fortaleza';
 
@@ -65,11 +65,12 @@ export interface BookParams {
   /** Idempotência: cliente passa chave única por tentativa pra evitar duplo booking. */
   idempotencyKey?:   string | null;
   /**
-   * Combo Boris: quando presente, o serviço precisa ser elegível (Cabelo+Barba)
-   * e o produto vira um item da comanda. O desconto é aplicado no servidor —
-   * o cliente só escolhe o slug do produto, nunca o preço.
+   * Combo do dia: quando presente, o produto vira item da comanda e o desconto
+   * (discountPct, definido pelo barbeiro no combo) é aplicado no servidor sobre o
+   * serviço E o produto. O endpoint resolve isso a partir do comboId — o cliente
+   * nunca envia preço nem desconto.
    */
-  combo?:            { productSlug: string } | null;
+  combo?:            { productSlug: string; discountPct: number } | null;
 }
 
 export type BookResult =
@@ -137,25 +138,28 @@ export function bookAppointment(params: BookParams): BookResult {
     return { ok: false, httpStatus: 404, error: 'Barbeiro ou serviço não encontrado' };
   }
 
-  const { durationMinutes, priceCents, barberName, serviceName, serviceSlug } = bsRows[0];
+  const { durationMinutes, priceCents, barberName, serviceName } = bsRows[0];
 
-  // Combo Boris: valida elegibilidade + produto e calcula preços com desconto
+  // Combo do dia: valida o produto e calcula preços com o desconto do combo
   // no servidor (cliente nunca envia valor). O produto vira item da comanda.
   const combo = params.combo ?? null;
   let finalPriceCents = priceCents;
   let comboItem: { name: string; priceCents: number } | null = null;
   let notes: string | null = null;
   if (combo) {
-    if (!isComboEligibleSlug(serviceSlug)) {
-      return { ok: false, httpStatus: 400, error: 'Esse serviço não faz parte do Combo Boris' };
-    }
-    const product = findComboProduct(combo.productSlug);
+    const pct = combo.discountPct;
+    // Produto vem do banco (tabela products) — precisa existir e estar ativo.
+    const product = db
+      .select({ name: products.name, priceCents: products.priceCents })
+      .from(products)
+      .where(and(eq(products.slug, combo.productSlug), eq(products.active, true)))
+      .all()[0];
     if (!product) {
       return { ok: false, httpStatus: 400, error: 'Produto do combo inválido' };
     }
-    finalPriceCents = applyComboDiscount(priceCents);
-    comboItem = { name: product.name, priceCents: applyComboDiscount(product.priceCents) };
-    notes = `🎁 Combo Boris — produto para retirar na barbearia: ${product.name}. 10% OFF aplicado (serviço + produto).`;
+    finalPriceCents = applyDiscountPct(priceCents, pct);
+    comboItem = { name: product.name, priceCents: applyDiscountPct(product.priceCents, pct) };
+    notes = `🎁 Combo do dia — produto para retirar na barbearia: ${product.name}. ${pct}% OFF aplicado (serviço + produto).`;
   }
 
   const endsAt  = addMinutes(startsAt, durationMinutes);

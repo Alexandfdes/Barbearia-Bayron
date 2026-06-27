@@ -1,19 +1,5 @@
 ---
-import { Image } from "astro:assets";
-import type { ImageMetadata } from "astro";
-import { products } from "../data/products";
-
-const productImages = import.meta.glob<{ default: ImageMetadata }>(
-  "../assets/products/*",
-  { eager: true }
-);
-
-const items = products.map((p) => {
-  const imgEntry = Object.entries(productImages).find(([path]) =>
-    path.endsWith(p.imgFile)
-  );
-  return { ...p, img: imgEntry?.[1].default };
-});
+import { WHATSAPP_NUMBER } from "../config";
 ---
 
 <section id="produtos" class="py-12 md:py-20 relative">
@@ -25,43 +11,54 @@ const items = products.map((p) => {
       <p class="text-neutral-400 max-w-lg mx-auto">Desenvolvidos para quem leva o cuidado pessoal a sério.</p>
     </div>
 
-    <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:gap-6">
-      {items.map((p) => (
-        <div class="bg-dark-card border border-white/5 hover:border-teal/20 rounded-md overflow-hidden flex flex-col transition-colors duration-300 group">
-          <!-- Product image — clicável -->
-          <a href={`/produtos/${p.slug}`} class="relative aspect-square overflow-hidden block">
-            {p.img ? (
-              <Image
-                src={p.img}
-                alt={p.name}
-                class="w-full h-full object-cover md:group-hover:scale-105 md:transition-transform md:duration-700"
-                loading="lazy"
-                widths={[200, 400, 800]}
-                sizes="(max-width: 640px) 50vw, (max-width: 1024px) 50vw, 33vw"
-              />
-            ) : (
-              <div class="w-full h-full bg-neutral-900" />
-            )}
-          </a>
-          <!-- Info -->
-          <div class="p-3 sm:p-6 flex flex-col flex-1">
-            <h3 class="font-serif text-sm sm:text-lg font-medium text-neutral-50 mb-1 sm:mb-2 leading-tight">{p.name}</h3>
-            <p class="hidden sm:block text-sm text-neutral-400 mb-5 flex-1">{p.shortDesc}</p>
-            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mt-1 sm:mt-0">
-              <span class="text-teal-light font-semibold text-base sm:text-xl">{p.price}</span>
-              <a
-                href={`/produtos/${p.slug}`}
-                class="inline-flex items-center justify-center gap-1.5 sm:gap-2 text-[11px] sm:text-sm font-medium text-neutral-300 hover:text-white border border-white/10 hover:border-teal/30 px-2.5 py-1.5 sm:px-4 sm:py-2.5 rounded-sm transition-all duration-300 uppercase tracking-wider"
-              >
-                Ver
-                <svg class="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                </svg>
-              </a>
-            </div>
-          </div>
-        </div>
-      ))}
+    <div id="produtos-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:gap-6">
+      <p id="produtos-loading" class="col-span-full text-center text-sm text-neutral-500 py-8">Carregando produtos…</p>
     </div>
   </div>
 </section>
+
+<script define:vars={{ waNumber: WHATSAPP_NUMBER }}>
+  (async () => {
+    const grid = document.getElementById("produtos-grid");
+    const section = document.getElementById("produtos");
+    if (!grid) return;
+
+    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const fmt = (c) => { const r = c / 100; return Number.isInteger(r) ? `R$ ${r}` : `R$ ${r.toFixed(2).replace(".", ",")}`; };
+
+    try {
+      const res = await fetch("/api/products");
+      const items = res.ok ? await res.json() : [];
+      if (!Array.isArray(items) || items.length === 0) { section?.classList.add("hidden"); return; }
+
+      grid.innerHTML = items.map((p) => {
+        const wa = waNumber
+          ? `https://wa.me/${waNumber}?text=${encodeURIComponent("Olá! Tenho interesse no " + p.name + ".")}`
+          : "#";
+        const img = p.image
+          ? `<img src="${esc(p.image)}" alt="${esc(p.name)}" loading="lazy" class="w-full h-full object-cover md:group-hover:scale-105 md:transition-transform md:duration-700" />`
+          : `<div class="w-full h-full bg-neutral-900"></div>`;
+        return `
+          <div class="bg-dark-card border border-white/5 hover:border-teal/20 rounded-md overflow-hidden flex flex-col transition-colors duration-300 group">
+            <div class="relative aspect-square overflow-hidden bg-neutral-900">${img}</div>
+            <div class="p-3 sm:p-6 flex flex-col flex-1">
+              <h3 class="font-serif text-sm sm:text-lg font-medium text-neutral-50 mb-1 sm:mb-2 leading-tight">${esc(p.name)}</h3>
+              <p class="hidden sm:block text-sm text-neutral-400 mb-5 flex-1">${esc(p.shortDesc)}</p>
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mt-1 sm:mt-0">
+                <span class="text-teal-light font-semibold text-base sm:text-xl">${fmt(p.priceCents)}</span>
+                <a href="${wa}" target="_blank" rel="noopener"
+                   class="inline-flex items-center justify-center gap-1.5 sm:gap-2 text-[11px] sm:text-sm font-medium text-neutral-300 hover:text-white border border-white/10 hover:border-teal/30 px-2.5 py-1.5 sm:px-4 sm:py-2.5 rounded-sm transition-all duration-300 uppercase tracking-wider">
+                  Comprar
+                  <svg class="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                  </svg>
+                </a>
+              </div>
+            </div>
+          </div>`;
+      }).join("");
+    } catch {
+      section?.classList.add("hidden");
+    }
+  })();
+</script>

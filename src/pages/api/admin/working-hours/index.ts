@@ -19,7 +19,8 @@ const daySchema = z.object({
 
 const putSchema = z.object({
   barberId: z.number().int().positive(),
-  hours:    z.array(daySchema).max(7),
+  // Até 2 turnos por dia (manhã + tarde) × 7 dias = 14 janelas.
+  hours:    z.array(daySchema).max(14),
 });
 
 export const GET: APIRoute = async ({ request, url }) => {
@@ -78,10 +79,22 @@ export const PUT: APIRoute = async ({ request }) => {
     return json({ error: 'Barbeiro não encontrado' }, 404);
   }
 
-  // Verifica weekdays únicos no payload
-  const weekdays = hours.map(h => h.weekday);
-  if (new Set(weekdays).size !== weekdays.length) {
-    return json({ error: 'Dias duplicados no payload' }, 400);
+  // Permite múltiplas janelas por dia (ex.: manhã + tarde), desde que não se
+  // sobreponham dentro do mesmo dia. slots.ts e bookAppointment já tratam N janelas.
+  const byDay = new Map<number, { startTime: string; endTime: string }[]>();
+  for (const h of hours) {
+    const arr = byDay.get(h.weekday) ?? [];
+    arr.push(h);
+    byDay.set(h.weekday, arr);
+  }
+  const WD = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  for (const [wd, wins] of byDay) {
+    const sorted = [...wins].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].startTime < sorted[i - 1].endTime) {
+        return json({ error: `${WD[wd]}: os turnos não podem se sobrepor` }, 400);
+      }
+    }
   }
 
   // Replace atômico: deleta os antigos e insere os novos

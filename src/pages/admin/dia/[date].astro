@@ -5,8 +5,8 @@ import AdminLayout from '../../../layouts/AdminLayout.astro';
 import AgendaLista from '../../../components/admin/AgendaLista.astro';
 import { getSession } from '../../../lib/session.js';
 import { db } from '../../../db/index.js';
-import { appointments, barbers, services, timeOff, workingHours } from '../../../db/schema.js';
-import { eq, and, gt, gte, lt, or, isNull } from 'drizzle-orm';
+import { appointments, appointmentItems, barbers, services, timeOff, workingHours, productSales, products } from '../../../db/schema.js';
+import { eq, and, gt, gte, lt, or, isNull, inArray } from 'drizzle-orm';
 import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { waPhone } from '../../../lib/whatsapp.js';
 import { computeOccupancy, pickEmptiestBand } from '../../../lib/occupancy.js';
@@ -74,6 +74,51 @@ const apptRows = db
       : and(gte(appointments.startsAt, dayStart), lt(appointments.startsAt, dayEnd))
   )
   .orderBy(appointments.startsAt)
+  .all();
+
+// Itens por agendamento (produto do combo Boris + extras da comanda). Usado pra
+// somar produtos na receita do dia — mesma base do relatório mensal.
+const apptIds = apptRows.map(a => a.id);
+const itemsByAppt = new Map<number, number>();
+if (apptIds.length > 0) {
+  const itemRows = db
+    .select({ appointmentId: appointmentItems.appointmentId, priceCents: appointmentItems.priceCents })
+    .from(appointmentItems)
+    .where(inArray(appointmentItems.appointmentId, apptIds))
+    .all();
+  for (const it of itemRows) {
+    itemsByAppt.set(it.appointmentId, (itemsByAppt.get(it.appointmentId) ?? 0) + it.priceCents);
+  }
+}
+
+// Vendas de produto avulsas do dia (sem agendamento) — entram no faturamento como produto.
+const saleRows = db
+  .select({
+    id:         productSales.id,
+    name:       productSales.name,
+    quantity:   productSales.quantity,
+    priceCents: productSales.priceCents,
+    barberId:   productSales.barberId,
+    barberName: barbers.name,
+    soldAt:     productSales.soldAt,
+  })
+  .from(productSales)
+  .innerJoin(barbers, eq(barbers.id, productSales.barberId))
+  .where(
+    filterBarberId !== null
+      ? and(gte(productSales.soldAt, dayStart), lt(productSales.soldAt, dayEnd), eq(productSales.barberId, filterBarberId))
+      : and(gte(productSales.soldAt, dayStart), lt(productSales.soldAt, dayEnd))
+  )
+  .orderBy(productSales.soldAt)
+  .all();
+const salesCents = saleRows.reduce((s, r) => s + r.priceCents, 0);
+
+// Produtos ativos (catálogo do banco) — alimentam o seletor da venda avulsa.
+const productListForSale = db
+  .select({ name: products.name, priceCents: products.priceCents })
+  .from(products)
+  .where(eq(products.active, true))
+  .orderBy(products.sortOrder, products.id)
   .all();
 
 const allBarbers = session.role === 'admin'
@@ -222,10 +267,12 @@ const blockList: BlockView[] = timeOffRows.map(b => {
   };
 }).filter(b => b.durationMin > 0);
 
-// Receita prevista: confirmed + completed (não conta cancelled nem no_show)
+// Receita do dia: serviço de confirmados + concluídos, e os produtos/comanda dos
+// concluídos (produto só conta quando concluído — mesma regra do relatório mensal).
 const revenueCents = apptRows
   .filter(a => a.status === 'confirmed' || a.status === 'completed')
-  .reduce((sum, a) => sum + a.priceCents, 0);
+  .reduce((sum, a) => sum + a.priceCents + (a.status === 'completed' ? (itemsByAppt.get(a.id) ?? 0) : 0), 0)
+  + salesCents;
 const revenueLabel = `R$ ${(revenueCents / 100).toFixed(0)}`;
 const revenueCount = apptRows.filter(a => a.status === 'confirmed' || a.status === 'completed').length;
 
@@ -325,6 +372,7 @@ const apptsLite = apptList.map(a => ({
   barberId:          a.barberId,
   durationMinutes:   a.durationMinutes,
   priceCents:        a.priceCents,
+  itemsCents:        itemsByAppt.get(a.id) ?? 0,
   price:             a.price,
   timeLocal:         a.timeLocal,
   endTimeLocal:      a.endTimeLocal,
@@ -342,6 +390,8 @@ const clientData = {
   appts:             apptsLite,
   startHour:         START_HOUR,
   totalHours:        TOTAL_HOURS,
+  salesCents,
+  products:          productListForSale,
 };
 ---
 
@@ -576,6 +626,36 @@ const clientData = {
       )}
     </section>
 
+    <!-- Vendas de produto avulsas do dia -->
+    <section>
+      <div class="flex items-center justify-between mb-3 gap-3">
+        <p class="text-xs text-neutral-500 uppercase tracking-widest">Produtos vendidos</p>
+        <p class="text-xs text-neutral-600" id="sales-count">
+          {saleRows.length > 0 ? `${saleRows.length} ${saleRows.length === 1 ? 'venda' : 'vendas'} · R$ ${Math.round(salesCents / 100)}` : ''}
+        </p>
+      </div>
+      <div id="sales-list" class="space-y-2">
+        {saleRows.map(sv => (
+          <div class="flex items-center gap-3 bg-dark-card border border-white/5 rounded-md px-4 py-2.5"
+               data-sale-id={String(sv.id)} data-cents={String(sv.priceCents)}>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm text-neutral-200 truncate">
+                {sv.name}{sv.quantity > 1 && <span class="text-neutral-500"> ×{sv.quantity}</span>}
+              </p>
+              {session.role === 'admin' && (
+                <p class="text-[10px] text-neutral-600">{sv.barberName.split(' ')[0]}</p>
+              )}
+            </div>
+            <span class="text-sm font-semibold text-teal-light tabular-nums shrink-0">R$ {Math.round(sv.priceCents / 100)}</span>
+            <button type="button" data-sale-remove={String(sv.id)} class="text-neutral-600 hover:text-red-400 transition-colors shrink-0" aria-label="Remover venda">✕</button>
+          </div>
+        ))}
+      </div>
+      <p id="sales-empty" class:list={['text-xs text-neutral-600 italic', saleRows.length > 0 && 'hidden']}>
+        Nenhum produto vendido avulso neste dia.
+      </p>
+    </section>
+
     <!-- Bottom action buttons -->
     <div class="flex gap-3">
       <button id="btn-manual"
@@ -592,6 +672,74 @@ const clientData = {
         </svg>
         Bloquear horário
       </button>
+      <button id="btn-sale"
+        class="flex-1 flex items-center justify-center gap-2 border border-white/10 hover:border-teal/30 text-neutral-400 hover:text-teal-light text-sm font-medium py-3 rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/>
+        </svg>
+        Vender produto
+      </button>
+    </div>
+
+    <!-- Modal: venda de produto avulsa -->
+    <div id="sale-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center px-4">
+      <div class="absolute inset-0 bg-black/70" data-sale-close></div>
+      <div class="relative bg-dark-card border border-white/10 rounded-lg p-5 w-full max-w-sm space-y-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-neutral-200">Vender produto</p>
+          <button type="button" data-sale-close class="text-neutral-500 hover:text-neutral-300 text-xs transition-colors">✕ fechar</button>
+        </div>
+
+        {session.role === 'admin' && (
+          <div>
+            <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Barbeiro</label>
+            <select id="sale-barber" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+              {allBarbers.map(b => <option value={String(b.id)} selected={filterBarberId === b.id}>{b.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Produto</label>
+          <select id="sale-product" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50">
+            {clientData.products.map(p => (
+              <option value={p.name} data-cents={String(p.priceCents)}>{p.name} — R$ {Math.round(p.priceCents / 100)}</option>
+            ))}
+            <option value="__outro__">Outro produto…</option>
+          </select>
+        </div>
+
+        <div id="sale-name-wrap" class="hidden">
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Nome do produto</label>
+          <input id="sale-name" type="text" maxlength="100" placeholder="Ex.: Pomada modeladora"
+                 class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+
+        <div class="flex gap-3">
+          <div class="w-20">
+            <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Qtd</label>
+            <input id="sale-qty" type="number" min="1" max="99" value="1"
+                   class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 text-center focus:outline-none focus:border-teal/50 tabular-nums" />
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Preço unit. (R$)</label>
+            <input id="sale-price" type="number" min="0" step="0.01"
+                   class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 text-center focus:outline-none focus:border-teal/50 tabular-nums" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between pt-1">
+          <span class="text-xs text-neutral-500 uppercase tracking-widest">Total</span>
+          <span id="sale-total" class="text-lg font-bold text-teal-light tabular-nums">R$ 0</span>
+        </div>
+
+        <div id="sale-error" class="hidden text-red-400 text-xs text-center"></div>
+
+        <button id="sale-confirm" type="button"
+          class="w-full bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest text-xs py-3 rounded transition-colors disabled:opacity-50">
+          Registrar venda
+        </button>
+      </div>
     </div>
 
     <!-- Manual booking form -->
@@ -1309,11 +1457,17 @@ const clientData = {
     let total = 0;
     let count = 0;
     for (const a of clientData.appts) {
-      if (a.status === 'confirmed' || a.status === 'completed') {
+      if (a.status === 'confirmed') {
         total += a.priceCents || 0;
+        count++;
+      } else if (a.status === 'completed') {
+        // Concluído soma o serviço + produtos/comanda (itemsCents)
+        total += (a.priceCents || 0) + (a.itemsCents || 0);
         count++;
       }
     }
+    // Vendas de produto avulsas do dia entram na receita (não no contador de agendamentos)
+    total += clientData.salesCents || 0;
     const rev = document.querySelector('section [class*="text-teal-light"][class*="text-3xl"]');
     if (rev) rev.textContent = `R$ ${(total / 100).toFixed(0)}`;
     const countEl = document.querySelector('section .text-xs.text-neutral-500.mt-0\\.5');
@@ -2121,6 +2275,10 @@ const clientData = {
     const extras = comandaExtras.map(e => ({ serviceId: e.serviceId, priceCents: e.priceCents }));
     const { ok, data } = await callApi(`/api/admin/appointments/${id}/complete`, 'POST', { extras });
     if (ok) {
+      // Soma os extras recém-lançados ao itemsCents do agendamento, pra receita
+      // atualizar na hora (o produto do combo já vem somado do servidor).
+      const appt = clientData.appts.find(a => String(a.id) === String(id));
+      if (appt) appt.itemsCents = (appt.itemsCents || 0) + comandaExtras.reduce((s, e) => s + e.priceCents, 0);
       updateApptCardStatus(id, 'completed');
       closeComanda();
       closeDetail();
@@ -2130,6 +2288,117 @@ const clientData = {
     }
     if (btn) { btn.disabled = false; btn.textContent = 'Concluir e fechar'; }
   });
+
+  // ─── Venda de produto avulsa ─────────────────────────────────────────────────
+  (function setupProductSale() {
+    const modal = document.getElementById('sale-modal');
+    if (!modal) return;
+    const productSel = document.getElementById('sale-product') as HTMLSelectElement;
+    const nameWrap   = document.getElementById('sale-name-wrap') as HTMLElement;
+    const nameInput  = document.getElementById('sale-name') as HTMLInputElement;
+    const qtyInput   = document.getElementById('sale-qty') as HTMLInputElement;
+    const priceInput = document.getElementById('sale-price') as HTMLInputElement;
+    const totalEl    = document.getElementById('sale-total') as HTMLElement;
+    const errEl      = document.getElementById('sale-error') as HTMLElement;
+    const confirmBtn = document.getElementById('sale-confirm') as HTMLButtonElement;
+    const barberSel  = document.getElementById('sale-barber') as HTMLSelectElement | null;
+    const list       = document.getElementById('sales-list');
+    const emptyEl    = document.getElementById('sales-empty');
+    const countEl    = document.getElementById('sales-count');
+
+    const brlSale = (cents: number) => 'R$ ' + Math.round(cents / 100);
+    const escSale = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const unitCents = () => { const v = parseFloat(priceInput.value); return isFinite(v) && v >= 0 ? Math.round(v * 100) : 0; };
+    const qty = () => { const q = parseInt(qtyInput.value, 10); return isFinite(q) && q > 0 ? q : 1; };
+    const refreshTotal = () => { totalEl.textContent = brlSale(unitCents() * qty()); };
+
+    function applyProduct() {
+      const opt = productSel.options[productSel.selectedIndex];
+      if (productSel.value === '__outro__') {
+        nameWrap.classList.remove('hidden');
+        priceInput.value = '';
+      } else {
+        nameWrap.classList.add('hidden');
+        priceInput.value = (parseInt(opt.dataset.cents || '0', 10) / 100).toFixed(2);
+      }
+      refreshTotal();
+    }
+
+    function refreshSalesMeta() {
+      const n = list ? list.querySelectorAll('[data-sale-id]').length : 0;
+      if (emptyEl) emptyEl.classList.toggle('hidden', n > 0);
+      if (countEl) countEl.textContent = n ? `${n} ${n === 1 ? 'venda' : 'vendas'} · ${brlSale(clientData.salesCents || 0)}` : '';
+    }
+
+    function saleRow(sale: any) {
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-3 bg-dark-card border border-white/5 rounded-md px-4 py-2.5';
+      row.dataset.saleId = String(sale.id);
+      row.dataset.cents  = String(sale.priceCents);
+      const who = (clientData.role === 'admin' && sale.barberName) ? `<p class="text-[10px] text-neutral-600">${escSale(sale.barberName.split(' ')[0])}</p>` : '';
+      const q = sale.quantity > 1 ? ` <span class="text-neutral-500">×${sale.quantity}</span>` : '';
+      row.innerHTML = `<div class="flex-1 min-w-0"><p class="text-sm text-neutral-200 truncate">${escSale(sale.name)}${q}</p>${who}</div><span class="text-sm font-semibold text-teal-light tabular-nums shrink-0">${brlSale(sale.priceCents)}</span><button type="button" data-sale-remove="${sale.id}" class="text-neutral-600 hover:text-red-400 transition-colors shrink-0" aria-label="Remover venda">✕</button>`;
+      return row;
+    }
+
+    document.getElementById('btn-sale')?.addEventListener('click', () => {
+      errEl.classList.add('hidden'); errEl.textContent = '';
+      qtyInput.value = '1';
+      productSel.selectedIndex = 0;
+      applyProduct();
+      modal.classList.remove('hidden');
+    });
+    modal.querySelectorAll('[data-sale-close]').forEach(el => el.addEventListener('click', () => modal.classList.add('hidden')));
+    productSel.addEventListener('change', applyProduct);
+    qtyInput.addEventListener('input', refreshTotal);
+    priceInput.addEventListener('input', refreshTotal);
+
+    confirmBtn.addEventListener('click', async () => {
+      errEl.classList.add('hidden');
+      const isOutro = productSel.value === '__outro__';
+      const name = (isOutro ? nameInput.value : productSel.value).trim();
+      const unit = unitCents();
+      const q = qty();
+      if (!name)     { errEl.textContent = 'Informe o nome do produto'; errEl.classList.remove('hidden'); return; }
+      if (unit <= 0) { errEl.textContent = 'Informe o preço'; errEl.classList.remove('hidden'); return; }
+
+      confirmBtn.disabled = true; confirmBtn.textContent = 'Registrando...';
+      const payload: any = { name, quantity: q, unitPriceCents: unit, date: clientData.date };
+      if (barberSel) payload.barberId = parseInt(barberSel.value, 10);
+      const { ok, data } = await callApi('/api/admin/product-sales', 'POST', payload);
+      if (ok && data.sale) {
+        clientData.salesCents = (clientData.salesCents || 0) + data.sale.priceCents;
+        list?.prepend(saleRow(data.sale));
+        refreshSalesMeta();
+        recalculateRevenue();
+        modal.classList.add('hidden');
+        toast('Venda registrada', 'success');
+      } else {
+        errEl.textContent = data.error ?? 'Erro ao registrar'; errEl.classList.remove('hidden');
+      }
+      confirmBtn.disabled = false; confirmBtn.textContent = 'Registrar venda';
+    });
+
+    list?.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest('[data-sale-remove]') as HTMLElement | null;
+      if (!btn) return;
+      const id = btn.dataset.saleRemove;
+      const row = list.querySelector(`[data-sale-id="${id}"]`) as HTMLElement | null;
+      const confirmed = await showConfirm({ title: 'Remover venda?', message: 'A venda sai do faturamento do dia.', okLabel: 'Remover' });
+      if (!confirmed) return;
+      const { ok, data } = await callApi(`/api/admin/product-sales/${id}`, 'DELETE');
+      if (ok) {
+        const cents = row ? parseInt(row.dataset.cents || '0', 10) : 0;
+        clientData.salesCents = Math.max(0, (clientData.salesCents || 0) - cents);
+        row?.remove();
+        refreshSalesMeta();
+        recalculateRevenue();
+        toast('Venda removida', 'success');
+      } else {
+        toast(data.error ?? 'Erro ao remover', 'error');
+      }
+    });
+  })();
 
 
   // ─── Manual booking form ─────────────────────────────────────────────────────

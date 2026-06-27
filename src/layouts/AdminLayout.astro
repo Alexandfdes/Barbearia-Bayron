@@ -66,6 +66,8 @@ const backUrl = normalizedPath === '/admin' ? '/portal' : '/admin';
           { href: '/admin/horarios',  label: 'Horários',  active: path === '/admin/horarios' },
           { href: '/admin/relatorios', label: 'Relatórios', active: path === '/admin/relatorios' },
           ...(role === 'admin' ? [
+            { href: '/admin/produtos',   label: 'Produtos',   active: path === '/admin/produtos' },
+            { href: '/admin/combos',     label: 'Combos',     active: path === '/admin/combos' },
             { href: '/admin/barbeiros',  label: 'Barbeiros',  active: path === '/admin/barbeiros' },
           ] : []),
           { href: '/admin/bloqueios', label: 'Bloqueios', active: path === '/admin/bloqueios' },

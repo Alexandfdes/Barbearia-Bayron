@@ -8,7 +8,9 @@ import { sqlite } from '../../../../db/index.js';
 
 const TZ = 'America/Fortaleza';
 
-// customer_phone é armazenado normalizado (só dígitos) — LIKE direto na coluna.
+// Busca por telefone (customer_phone é só dígitos) OU por nome. LIKE é
+// case-insensitive p/ ASCII por padrão no SQLite. Quando um dos padrões vem
+// vazio ('') o lado correspondente é ignorado.
 const stmtSearch = sqlite.prepare(`
   SELECT
     a.id              AS id,
@@ -26,7 +28,8 @@ const stmtSearch = sqlite.prepare(`
   FROM appointments a
   INNER JOIN barbers  b ON b.id = a.barber_id
   INNER JOIN services s ON s.id = a.service_id
-  WHERE a.customer_phone LIKE ?
+  WHERE (@phone <> '' AND a.customer_phone LIKE @phone)
+     OR (@name  <> '' AND a.customer_name  LIKE @name)
   ORDER BY a.starts_at DESC
   LIMIT 50
 `);
@@ -50,14 +53,20 @@ export const GET: APIRoute = async ({ request, url }) => {
   const session = await getSession(request);
   if (!session) return json({ error: 'Não autenticado' }, 401);
 
-  const phoneRaw = url.searchParams.get('phone') ?? '';
-  const digits   = phoneRaw.replace(/\D/g, '');
+  // Aceita ?q= (telefone OU nome). Mantém ?phone= por compatibilidade.
+  const raw        = (url.searchParams.get('q') ?? url.searchParams.get('phone') ?? '').trim();
+  const digits     = raw.replace(/\D/g, '');
+  const hasLetters = /[a-zA-ZÀ-ÿ]/.test(raw);
 
-  if (digits.length < 4) {
-    return json({ results: [], info: 'Digite pelo menos 4 dígitos do telefone' });
+  // Telefone: 4+ dígitos. Nome: 2+ caracteres (removendo curingas do LIKE).
+  const phonePattern = digits.length >= 4 ? `%${digits}%` : '';
+  const namePattern  = hasLetters && raw.length >= 2 ? `%${raw.replace(/[%_]/g, '')}%` : '';
+
+  if (!phonePattern && !namePattern) {
+    return json({ results: [], info: 'Digite ao menos 4 dígitos do telefone ou 2 letras do nome' });
   }
 
-  const rows = stmtSearch.all(`%${digits}%`) as RawRow[];
+  const rows = stmtSearch.all({ phone: phonePattern, name: namePattern }) as RawRow[];
 
   const results = rows.map(r => ({
     id:              r.id,

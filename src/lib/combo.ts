@@ -1,14 +1,14 @@
 /**
- * Configuração do "Combo Boris" — fonte única de verdade (client + server).
+ * Configuração do "Combo Boris" — constantes puras, seguras pra client e server.
  *
  * Combo = um serviço Cabelo+Barba elegível + um produto Boris à escolha,
  * com COMBO_DISCOUNT_PCT de desconto aplicado sobre o serviço E sobre o produto.
  * Pagamento é presencial; o produto é retirado na barbearia.
  *
- * Sem dependências de banco/Node de propósito, pra poder ser importado tanto
- * no endpoint (servidor) quanto no script do wizard (cliente).
+ * A LISTA de produtos agora vem do banco (tabela products), exposta em
+ * /api/products. Por isso este arquivo NÃO importa mais data/products — assim
+ * continua importável no bundle do cliente (wizard) sem puxar dependências de Node.
  */
-import { products } from '../data/products.js';
 
 /** Desconto do Combo Boris (10%). */
 export const COMBO_DISCOUNT_PCT = 0.10;
@@ -38,15 +38,7 @@ export interface ComboProduct {
   priceCents: number;
 }
 
-/** Produtos Boris disponíveis no combo, com preço em centavos. */
-export function comboProducts(): ComboProduct[] {
-  return products.map((p) => ({
-    slug: p.slug,
-    name: p.name,
-    priceCents: Math.round(p.priceValue * 100),
-  }));
-}
-
-export function findComboProduct(slug: string): ComboProduct | null {
-  return comboProducts().find((p) => p.slug === slug) ?? null;
+/** Aplica um desconto percentual (0–100) a um valor em centavos (arredonda pro centavo). */
+export function applyDiscountPct(cents: number, pct: number): number {
+  return Math.round(cents * (1 - pct / 100));
 }

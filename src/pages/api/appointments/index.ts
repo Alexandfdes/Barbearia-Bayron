@@ -3,6 +3,9 @@ export const prerender = false;
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { addMinutes } from 'date-fns';
+import { and, eq } from 'drizzle-orm';
+import { db } from '../../../db/index.js';
+import { combos, products } from '../../../db/schema.js';
 import { json } from '../../../lib/api.js';
 import { bookAppointment } from '../../../lib/bookAppointment.js';
 import { checkRateLimit } from '../../../lib/rateLimit.js';
@@ -19,10 +22,9 @@ const bodySchema = z.object({
   customerBirthdate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data de nascimento inválida'),
   startsAt:          z.string().refine(s => !isNaN(new Date(s).getTime()), 'Data/hora inválida'),
   idempotencyKey:    z.string().min(8).max(64).optional(),
-  // Combo Boris: quando true, productSlug é obrigatório. Preço/desconto são
-  // resolvidos no servidor (bookAppointment); o cliente só escolhe o produto.
-  combo:             z.boolean().optional(),
-  productSlug:       z.string().min(2).max(60).optional(),
+  // Combo do dia: o cliente envia só o comboId. Serviço, produto e desconto são
+  // resolvidos no servidor a partir do combo — nada de preço/desconto vindo do cliente.
+  comboId:           z.number().int().positive().optional(),
 });
 
 function isPlausibleBirthdate(iso: string): boolean {
@@ -61,14 +63,21 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
   const { barberId, serviceId, customerName, customerPhone, customerBirthdate, startsAt: startsAtStr, idempotencyKey } = parsed.data;
 
-  // Combo: exige produto. Elegibilidade do serviço e existência do produto
-  // são re-validadas dentro do bookAppointment (contra dados do servidor).
-  let combo: { productSlug: string } | null = null;
-  if (parsed.data.combo) {
-    if (!parsed.data.productSlug) {
-      return json({ error: 'Escolha um produto Boris para o combo' }, 400);
-    }
-    combo = { productSlug: parsed.data.productSlug };
+  // Combo do dia: resolve serviço, produto e desconto no servidor a partir do combo.
+  // O serviço do agendamento passa a ser o do combo (ignora o serviceId do cliente).
+  let combo: { productSlug: string; discountPct: number } | null = null;
+  let effectiveServiceId = serviceId;
+  if (parsed.data.comboId) {
+    const c = db
+      .select({ serviceId: combos.serviceId, productId: combos.productId, discountPct: combos.discountPct })
+      .from(combos)
+      .where(and(eq(combos.id, parsed.data.comboId), eq(combos.active, true)))
+      .all()[0];
+    if (!c) return json({ error: 'Combo indisponível' }, 400);
+    const prod = db.select({ slug: products.slug }).from(products).where(eq(products.id, c.productId)).all()[0];
+    if (!prod) return json({ error: 'Produto do combo indisponível' }, 400);
+    effectiveServiceId = c.serviceId;
+    combo = { productSlug: prod.slug, discountPct: c.discountPct };
   }
 
   // Camada 2: por telefone (mesmo IP) — barra abuso repetido com um número
@@ -96,7 +105,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   try {
     const result = bookAppointment({
       barberId,
-      serviceId,
+      serviceId: effectiveServiceId,
       customerName,
       customerPhone,
       customerBirthdate,
