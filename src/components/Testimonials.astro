@@ -64,10 +64,11 @@ const ldJson = {
       </a>
     </div>
 
-    <!-- Grade de cards -->
-    <div class="grid grid-cols-1 min-[500px]:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-      {depoimentos.map((d) => (
-        <article class="bg-dark-card border border-white/5 hover:border-teal/20 rounded-md p-4 sm:p-5 md:p-6 flex flex-col gap-3 sm:gap-4 transition-colors duration-300">
+    <!-- Carrossel de avaliações (auto-scroll, igual ao das fotos) -->
+    <div class="relative">
+      <div id="reviews-carousel" data-count={depoimentos.length} class="flex gap-4 sm:gap-6 overflow-x-auto no-scrollbar pb-2">
+      {[...depoimentos, ...depoimentos].map((d) => (
+        <article class="shrink-0 w-[85%] min-[500px]:w-[46%] lg:w-[31.5%] bg-dark-card border border-white/5 hover:border-teal/20 rounded-md p-4 sm:p-5 md:p-6 flex flex-col gap-3 sm:gap-4 transition-colors duration-300">
           <div class="flex gap-1" aria-label={`${d.rating} de 5 estrelas`}>
             {Array.from({ length: d.rating }).map(() => (
               <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
@@ -92,6 +93,94 @@ const ldJson = {
           </footer>
         </article>
       ))}
+      </div>
+
+      <!-- Setas (desktop) -->
+      <button id="reviews-prev" type="button" aria-label="Avaliações anteriores"
+        class="hidden md:flex absolute -left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-sm border border-white/10 hover:border-white/20 items-center justify-center text-white transition-all duration-200 hover:scale-110">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+      </button>
+      <button id="reviews-next" type="button" aria-label="Próximas avaliações"
+        class="hidden md:flex absolute -right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-sm border border-white/10 hover:border-white/20 items-center justify-center text-white transition-all duration-200 hover:scale-110">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+      </button>
     </div>
+
+    <p class="md:hidden text-center text-[11px] text-neutral-600 mt-3">Deslize para ver mais →</p>
   </div>
 </section>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const carousel = document.getElementById("reviews-carousel");
+    if (!carousel) return;
+
+    const originalCount = parseInt(carousel.getAttribute("data-count") || "0", 10);
+    let paused = false;          // hover / setas
+    let touching = false;        // dedo na tela
+    let userInteracted = false;  // entre touch e fim da inércia
+    let isProgrammaticScroll = false;
+    let scrollIdleTimer: number | undefined;
+    let currentScroll = 0;
+    const SCROLL_SPEED = 0.5;    // texto: mais devagar que o carrossel de fotos
+    const SCROLL_IDLE_DELAY = 200;
+
+    function gapPx() {
+      const g = parseFloat(getComputedStyle(carousel!).columnGap || "16");
+      return isFinite(g) ? g : 16;
+    }
+    function cardStep() {
+      const card = carousel!.querySelector<HTMLElement>("article");
+      return card ? card.offsetWidth + gapPx() : 320;
+    }
+    function isPaused() { return paused || touching || userInteracted; }
+
+    carousel.addEventListener("scroll", () => {
+      if (isProgrammaticScroll) return;
+      currentScroll = carousel.scrollLeft;
+      if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = window.setTimeout(() => {
+        if (!touching) { userInteracted = false; currentScroll = carousel.scrollLeft; }
+      }, SCROLL_IDLE_DELAY);
+    }, { passive: true });
+
+    function tick() {
+      if (!isPaused()) {
+        currentScroll += SCROLL_SPEED;
+        const singleSet = cardStep() * originalCount; // largura de um conjunto
+        if (singleSet > 0 && currentScroll >= singleSet) currentScroll -= singleSet;
+        isProgrammaticScroll = true;
+        carousel!.scrollLeft = currentScroll;
+        requestAnimationFrame(() => { isProgrammaticScroll = false; });
+      }
+      requestAnimationFrame(tick);
+    }
+
+    // Pausa no hover (pra ler) e durante o toque
+    carousel.addEventListener("mouseenter", () => { paused = true; });
+    carousel.addEventListener("mouseleave", () => { paused = false; });
+    carousel.addEventListener("touchstart", () => { touching = true; userInteracted = true; }, { passive: true });
+    carousel.addEventListener("touchend", () => {
+      touching = false;
+      // Mesmo num toque sem arrastar (tap), libera a pausa depois de um tempo —
+      // senão a flag fica presa e o carrossel congela no meio de um card.
+      setTimeout(() => { userInteracted = false; currentScroll = carousel.scrollLeft; }, 2000);
+    }, { passive: true });
+    carousel.addEventListener("touchcancel", () => { touching = false; userInteracted = false; }, { passive: true });
+
+    document.getElementById("reviews-prev")?.addEventListener("click", () => {
+      paused = true;
+      currentScroll = Math.max(0, currentScroll - cardStep());
+      carousel.scrollLeft = currentScroll;
+      setTimeout(() => { paused = false; }, 2000);
+    });
+    document.getElementById("reviews-next")?.addEventListener("click", () => {
+      paused = true;
+      currentScroll += cardStep();
+      carousel.scrollLeft = currentScroll;
+      setTimeout(() => { paused = false; }, 2000);
+    });
+
+    requestAnimationFrame(tick);
+  });
+</script>

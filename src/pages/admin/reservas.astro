@@ -1,0 +1,117 @@
+---
+export const prerender = false;
+
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSession } from '../../lib/session.js';
+import { db } from '../../db/index.js';
+import { barbers, reservations } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { formatInTimeZone } from 'date-fns-tz';
+import { waPhone } from '../../lib/whatsapp.js';
+
+const TZ = 'America/Fortaleza';
+
+const session = await getSession(Astro.request);
+if (!session) return Astro.redirect('/admin/login');
+
+const barberRow = db.select({ id: barbers.id, name: barbers.name, role: barbers.role })
+  .from(barbers).where(eq(barbers.id, session.barberId)).all()[0];
+if (!barberRow) return Astro.redirect('/admin/login');
+
+const rows = db.select().from(reservations).all();
+const rank: Record<string, number> = { pending: 0, fulfilled: 1, cancelled: 2 };
+rows.sort((a, b) => (rank[a.status] - rank[b.status]) || b.createdAt.localeCompare(a.createdAt));
+
+const pendingCount = rows.filter(r => r.status === 'pending').length;
+const brl = (c: number) => 'R$ ' + Math.round(c / 100);
+function whenLabel(iso: string): string {
+  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  return isNaN(d.getTime()) ? '' : formatInTimeZone(d, TZ, 'dd/MM/yy HH:mm');
+}
+const STATUS = {
+  pending:   { label: 'Pendente',  cls: 'bg-amber-500/15 text-amber-300' },
+  fulfilled: { label: 'Retirado',  cls: 'bg-teal/15 text-teal-light' },
+  cancelled: { label: 'Cancelado', cls: 'bg-neutral-700/50 text-neutral-400' },
+} as const;
+---
+
+<AdminLayout title="Reservas" barberName={barberRow.name} role={session.role}>
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-5 pb-24">
+
+    <div>
+      <h1 class="text-lg font-medium text-neutral-100">Reservas de produto</h1>
+      <p class="text-sm text-neutral-500 mt-1">
+        {pendingCount > 0
+          ? `${pendingCount} ${pendingCount === 1 ? 'reserva aguardando' : 'reservas aguardando'} retirada.`
+          : 'Nenhuma reserva pendente.'}
+      </p>
+    </div>
+
+    {rows.length === 0 && (
+      <div class="bg-dark-card border border-white/5 rounded-lg py-12 text-center">
+        <p class="text-sm text-neutral-400">Nenhuma reserva ainda.</p>
+        <p class="text-xs text-neutral-600 mt-1">As reservas feitas no site aparecem aqui.</p>
+      </div>
+    )}
+
+    <div class="space-y-2">
+      {rows.map(r => {
+        const wa = waPhone(r.customerPhone);
+        const st = STATUS[r.status as keyof typeof STATUS] ?? STATUS.pending;
+        return (
+          <div class:list={['bg-dark-card border border-white/5 rounded-lg p-4', r.status !== 'pending' && 'opacity-60']}
+               data-id={String(r.id)}>
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-neutral-100">
+                  {r.productName}{r.quantity > 1 && <span class="text-neutral-400"> ×{r.quantity}</span>}
+                </p>
+                <p class="text-xs text-neutral-500 mt-0.5">{r.customerName}</p>
+                <p class="text-[11px] text-neutral-600 mt-0.5 tabular-nums">{whenLabel(r.createdAt)}</p>
+              </div>
+              <div class="text-right shrink-0">
+                <span class:list={['text-[10px] px-2 py-0.5 rounded uppercase tracking-wider', st.cls]}>{st.label}</span>
+                <p class="text-sm font-semibold text-teal-light tabular-nums mt-1">{brl(r.priceCents * r.quantity)}</p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 mt-3">
+              {wa
+                ? <a href={`https://wa.me/${wa}`} target="_blank" rel="noopener" class="text-[11px] px-2.5 py-1.5 rounded border border-green-500/30 text-green-400 hover:bg-green-500/10 transition-colors">WhatsApp</a>
+                : <span class="text-[11px] text-neutral-600">{r.customerPhone}</span>}
+              {r.status === 'pending' && (
+                <>
+                  <button data-action="fulfill" class="ml-auto text-[11px] px-3 py-1.5 rounded border border-teal/30 text-teal-light hover:bg-teal/10 transition-colors font-medium">Marcar retirado</button>
+                  <button data-action="cancel" class="text-[11px] px-2.5 py-1.5 rounded border border-red-500/20 text-red-400/80 hover:bg-red-500/10 transition-colors">Cancelar</button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+
+  </main>
+</AdminLayout>
+
+<script>
+  document.querySelectorAll('[data-id]').forEach(card => {
+    const el = card as HTMLElement;
+    const id = el.dataset.id!;
+    async function act(action: string, confirmMsg?: string) {
+      if (confirmMsg && !confirm(confirmMsg)) return;
+      const res = await fetch(`/api/admin/reservations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) { location.reload(); return; }
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? 'Erro');
+    }
+    el.querySelector('[data-action="fulfill"]')?.addEventListener('click', () =>
+      act('fulfill', 'Confirmar retirada? Isso registra a venda no faturamento.'));
+    el.querySelector('[data-action="cancel"]')?.addEventListener('click', () =>
+      act('cancel', 'Cancelar esta reserva?'));
+  });
+</script>

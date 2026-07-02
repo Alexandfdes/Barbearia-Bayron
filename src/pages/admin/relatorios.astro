@@ -305,7 +305,9 @@ const produtosRank = [...cur.porProduto.entries()]
   .sort((a, b) => b.cents - a.cents)
   .slice(0, 6);
 
-const temDados = (cur.completedCount + cur.noShowCount + cur.abertoCount) > 0 || cur.previstoCents > 0 || clientesUnicos > 0;
+// realizadoCents cobre também vendas de produto avulsas / reservas retiradas —
+// senão um mês só com produto (sem atendimento) mostraria "Nenhum movimento".
+const temDados = (cur.completedCount + cur.noShowCount + cur.abertoCount) > 0 || cur.previstoCents > 0 || cur.realizadoCents > 0 || clientesUnicos > 0;
 const tituloPainel = isAdmin ? 'Painel' : 'Seu desempenho';
 const subtitulo = isAdmin ? `${MESES[mm - 1]} de ${yy}` : `${barberRow.name.split(' ')[0]} · ${MESES[mm - 1]} de ${yy}`;
 
@@ -435,21 +437,21 @@ const geradoEm = formatInTimeZone(nowUtc, TZ, "dd/MM/yyyy 'às' HH:mm");
             <p class="text-xs text-neutral-500 uppercase tracking-widest">Ticket médio</p>
             <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{brl(cur.ticketCents)}</p>
             {deltaTicket != null
-              ? <p class:list={['text-xs mt-0.5 font-medium', deltaTicket >= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaTicket >= 0 ? '▲' : '▼'} {Math.abs(deltaTicket)}%</p>
+              ? <p class:list={['text-xs mt-0.5 font-medium', deltaTicket >= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaTicket >= 0 ? '▲' : '▼'} {Math.abs(deltaTicket)}% vs. mês anterior</p>
               : <p class="text-xs text-neutral-600 mt-0.5">por atendimento</p>}
           </div>
           <div class="bg-dark-card border border-white/5 rounded-lg p-4">
             <p class="text-xs text-neutral-500 uppercase tracking-widest">Atendimentos</p>
             <p class="text-2xl font-bold text-neutral-100 mt-1 tabular-nums">{cur.completedCount}</p>
             {deltaAtend != null
-              ? <p class:list={['text-xs mt-0.5 font-medium', deltaAtend >= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaAtend >= 0 ? '▲' : '▼'} {Math.abs(deltaAtend)}%</p>
+              ? <p class:list={['text-xs mt-0.5 font-medium', deltaAtend >= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaAtend >= 0 ? '▲' : '▼'} {Math.abs(deltaAtend)}% vs. mês anterior</p>
               : <p class="text-xs text-neutral-600 mt-0.5">concluídos</p>}
           </div>
           <div class="bg-dark-card border border-white/5 rounded-lg p-4">
             <p class="text-xs text-neutral-500 uppercase tracking-widest">No-show</p>
             <p class="text-2xl font-bold text-red-400 mt-1 tabular-nums">{cur.noShowRate}%</p>
             {Math.abs(deltaNoShow) >= 0.1
-              ? <p class:list={['text-xs mt-0.5 font-medium', deltaNoShow <= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaNoShow <= 0 ? '▼' : '▲'} {Math.abs(deltaNoShow)} p.p.</p>
+              ? <p class:list={['text-xs mt-0.5 font-medium', deltaNoShow <= 0 ? 'text-emerald-400' : 'text-red-400']}>{deltaNoShow <= 0 ? '▼ menos faltas' : '▲ mais faltas'} que mês passado</p>
               : <p class="text-xs text-neutral-600 mt-0.5">{cur.noShowCount} {cur.noShowCount === 1 ? 'falta' : 'faltas'}</p>}
           </div>
           <div class="bg-dark-card border border-white/5 rounded-lg p-4">

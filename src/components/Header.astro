@@ -102,6 +102,7 @@ const { solid = false } = Astro.props;
     const iconMenu = document.getElementById('icon-menu');
     const iconClose = document.getElementById('icon-close');
     const links = document.querySelectorAll('.mobile-link');
+    const wa = document.getElementById('whatsapp-cta'); // botão flutuante do WhatsApp
 
     if (!btn || !menu || !iconMenu || !iconClose) return;
 
@@ -114,11 +115,13 @@ const { solid = false } = Astro.props;
         iconMenu.classList.add('hidden');
         iconClose.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
+        wa?.classList.add('opacity-0', 'pointer-events-none'); // esconde o WhatsApp por baixo do menu
       } else {
         menu.classList.add('opacity-0', 'pointer-events-none');
         iconMenu.classList.remove('hidden');
         iconClose.classList.add('hidden');
         document.body.style.overflow = '';
+        wa?.classList.remove('opacity-0', 'pointer-events-none');
       }
     }
 

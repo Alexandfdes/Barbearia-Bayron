@@ -33,30 +33,6 @@ const IG_GLYPH = "M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.91
       <span class="text-teal-light text-sm font-medium tracking-[0.25em] uppercase">Portfólio</span>
       <h2 class="font-serif text-3xl md:text-5xl font-medium mt-3 mb-4 text-neutral-50">Transformações que Inspiram</h2>
       <p class="text-neutral-400 max-w-lg mx-auto">Cada corte é pensado para valorizar seu estilo. Confira alguns dos nossos trabalhos.</p>
-
-      <!-- Cabeçalho de perfil do Instagram -->
-      <div class="flex items-center justify-center gap-3 mt-8">
-        <a href={INSTAGRAM_URL} target="_blank" rel="noopener" aria-label="Abrir o perfil no Instagram" class="flex-none">
-          <span class="block rounded-full p-[2px]" style="background:conic-gradient(from 215deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5,#feda75)">
-            <span class="block rounded-full p-[2px] bg-dark-alt">
-              <Image src={avatar} alt="Barbearia Bayron" width={96} height={96} class="w-11 h-11 rounded-full object-cover" />
-            </span>
-          </span>
-        </a>
-        <div>
-          <p class="text-white font-medium leading-tight">{HANDLE}</p>
-          <p class="text-gray-light text-sm">Barbearia masculina · {ADDRESS.city}</p>
-        </div>
-        <a
-          href={INSTAGRAM_URL}
-          target="_blank"
-          rel="noopener"
-          class="inline-flex items-center gap-2 bg-teal hover:bg-teal-hover text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-        >
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={IG_GLYPH} /></svg>
-          Seguir
-        </a>
-      </div>
     </div>
   </div>
 
@@ -119,6 +95,34 @@ const IG_GLYPH = "M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.91
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
       </svg>
     </button>
+  </div>
+
+  <!-- Card "Seguir no Instagram" — abaixo do carrossel -->
+  <div class="max-w-md mx-auto px-4">
+    <div class="flex flex-col sm:flex-row sm:items-center gap-4 bg-dark-card border border-white/10 rounded-2xl p-4 hover:border-teal/30 transition-colors">
+      <div class="flex items-center gap-3 min-w-0 flex-1">
+        <a href={INSTAGRAM_URL} target="_blank" rel="noopener" aria-label="Abrir o perfil no Instagram" class="flex-none">
+          <span class="block rounded-full p-[2px]" style="background:conic-gradient(from 215deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5,#feda75)">
+            <span class="block rounded-full p-[2px] bg-dark-card">
+              <Image src={avatar} alt="Barbearia Bayron" width={96} height={96} class="w-12 h-12 rounded-full object-cover" />
+            </span>
+          </span>
+        </a>
+        <div class="min-w-0">
+          <p class="text-white font-semibold leading-tight truncate">{HANDLE}</p>
+          <p class="text-gray-light text-sm truncate">Barbearia masculina · {ADDRESS.city}</p>
+        </div>
+      </div>
+      <a
+        href={INSTAGRAM_URL}
+        target="_blank"
+        rel="noopener"
+        class="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 bg-teal hover:bg-teal-hover text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={IG_GLYPH} /></svg>
+        Seguir
+      </a>
+    </div>
   </div>
 </section>
 

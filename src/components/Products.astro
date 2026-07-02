@@ -1,5 +1,7 @@
 ---
-import { WHATSAPP_NUMBER } from "../config";
+// Catálogo de produtos (linha Boris) — dinâmico. Busca /api/products e monta os
+// cards; o botão "Reservar" abre um modal que registra a reserva (o barbeiro vê
+// em /admin/reservas). Sem pagamento online: reserva e retira na barbearia.
 ---
 
 <section id="produtos" class="py-12 md:py-20 relative">
@@ -15,26 +17,106 @@ import { WHATSAPP_NUMBER } from "../config";
       <p id="produtos-loading" class="col-span-full text-center text-sm text-neutral-500 py-8">Carregando produtos…</p>
     </div>
   </div>
+
+  <!-- Modal de reserva -->
+  <div id="reserve-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center px-4">
+    <div class="absolute inset-0 bg-black/70" data-reserve-close></div>
+    <div class="relative bg-dark-card border border-white/10 rounded-lg p-5 w-full max-w-sm">
+      <div id="reserve-form-wrap" class="space-y-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-neutral-200">Reservar produto</p>
+          <button type="button" data-reserve-close class="text-neutral-500 hover:text-neutral-300 text-xs">✕ fechar</button>
+        </div>
+        <p id="reserve-product" class="text-teal-light font-semibold"></p>
+        <div class="w-24">
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Quantidade</label>
+          <input id="reserve-qty" type="number" min="1" max="20" value="1" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 text-center focus:outline-none focus:border-teal/50 tabular-nums" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">Seu nome</label>
+          <input id="reserve-name" type="text" maxlength="100" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">WhatsApp (DDD + número)</label>
+          <input id="reserve-phone" type="tel" inputmode="numeric" maxlength="20" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+        </div>
+        <div id="reserve-error" class="hidden text-red-400 text-xs text-center"></div>
+        <button id="reserve-confirm" type="button" class="w-full bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest text-xs py-3 rounded transition-colors disabled:opacity-50">Reservar</button>
+        <p class="text-[11px] text-neutral-500 text-center">Você reserva aqui e retira na barbearia. Sem pagamento online.</p>
+      </div>
+      <div id="reserve-success" class="hidden text-center py-4 space-y-3">
+        <div class="w-12 h-12 mx-auto rounded-full bg-teal/20 flex items-center justify-center text-teal-light text-2xl">✓</div>
+        <p class="text-neutral-100 font-medium">Reserva feita!</p>
+        <p class="text-sm text-neutral-400">É só passar na barbearia pra retirar — vamos separar pra você.</p>
+        <button type="button" data-reserve-close class="text-teal-light text-sm underline">Fechar</button>
+      </div>
+    </div>
+  </div>
 </section>
 
-<script define:vars={{ waNumber: WHATSAPP_NUMBER }}>
+<script>
   (async () => {
     const grid = document.getElementById("produtos-grid");
     const section = document.getElementById("produtos");
     if (!grid) return;
 
-    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    const fmt = (c) => { const r = c / 100; return Number.isInteger(r) ? `R$ ${r}` : `R$ ${r.toFixed(2).replace(".", ",")}`; };
+    const esc = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const fmt = (c: number) => { const r = c / 100; return Number.isInteger(r) ? `R$ ${r}` : `R$ ${r.toFixed(2).replace(".", ",")}`; };
 
+    // ── Modal de reserva ──
+    const modal = document.getElementById("reserve-modal");
+    const formWrap = document.getElementById("reserve-form-wrap");
+    const successEl = document.getElementById("reserve-success");
+    const prodEl = document.getElementById("reserve-product");
+    const qtyEl = document.getElementById("reserve-qty") as HTMLInputElement;
+    const nameEl = document.getElementById("reserve-name") as HTMLInputElement;
+    const phoneEl = document.getElementById("reserve-phone") as HTMLInputElement;
+    const errEl = document.getElementById("reserve-error");
+    const confirmBtn = document.getElementById("reserve-confirm") as HTMLButtonElement;
+    let currentId = 0;
+
+    const showErr = (m: string) => { if (errEl) { errEl.textContent = m; errEl.classList.remove("hidden"); } };
+
+    function openModal(id: number, name: string) {
+      currentId = id;
+      if (prodEl) prodEl.textContent = name;
+      qtyEl.value = "1"; nameEl.value = ""; phoneEl.value = "";
+      errEl?.classList.add("hidden");
+      formWrap?.classList.remove("hidden");
+      successEl?.classList.add("hidden");
+      modal?.classList.remove("hidden");
+    }
+    modal?.querySelectorAll("[data-reserve-close]").forEach(el => el.addEventListener("click", () => modal?.classList.add("hidden")));
+
+    confirmBtn?.addEventListener("click", async () => {
+      errEl?.classList.add("hidden");
+      const name = nameEl.value.trim();
+      const phone = phoneEl.value.trim();
+      const quantity = Math.max(1, parseInt(qtyEl.value, 10) || 1);
+      if (name.length < 2) return showErr("Informe seu nome");
+      if (phone.replace(/\D/g, "").length < 10) return showErr("WhatsApp inválido (DDD + número)");
+
+      confirmBtn.disabled = true; confirmBtn.textContent = "Reservando...";
+      try {
+        const res = await fetch("/api/reservations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productId: currentId, quantity, customerName: name, customerPhone: phone }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) { formWrap?.classList.add("hidden"); successEl?.classList.remove("hidden"); }
+        else showErr(data.error ?? "Erro ao reservar");
+      } catch { showErr("Erro de conexão"); }
+      confirmBtn.disabled = false; confirmBtn.textContent = "Reservar";
+    });
+
+    // ── Cards ──
     try {
-      const res = await fetch("/api/products");
-      const items = res.ok ? await res.json() : [];
+      const resp = await fetch("/api/products");
+      const items = resp.ok ? await resp.json() : [];
       if (!Array.isArray(items) || items.length === 0) { section?.classList.add("hidden"); return; }
 
-      grid.innerHTML = items.map((p) => {
-        const wa = waNumber
-          ? `https://wa.me/${waNumber}?text=${encodeURIComponent("Olá! Tenho interesse no " + p.name + ".")}`
-          : "#";
+      grid.innerHTML = items.map((p: any) => {
         const img = p.image
           ? `<img src="${esc(p.image)}" alt="${esc(p.name)}" loading="lazy" class="w-full h-full object-cover md:group-hover:scale-105 md:transition-transform md:duration-700" />`
           : `<div class="w-full h-full bg-neutral-900"></div>`;
@@ -46,17 +128,21 @@ import { WHATSAPP_NUMBER } from "../config";
               <p class="hidden sm:block text-sm text-neutral-400 mb-5 flex-1">${esc(p.shortDesc)}</p>
               <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mt-1 sm:mt-0">
                 <span class="text-teal-light font-semibold text-base sm:text-xl">${fmt(p.priceCents)}</span>
-                <a href="${wa}" target="_blank" rel="noopener"
-                   class="inline-flex items-center justify-center gap-1.5 sm:gap-2 text-[11px] sm:text-sm font-medium text-neutral-300 hover:text-white border border-white/10 hover:border-teal/30 px-2.5 py-1.5 sm:px-4 sm:py-2.5 rounded-sm transition-all duration-300 uppercase tracking-wider">
-                  Comprar
+                <button type="button" data-reserve data-id="${p.id}" data-name="${esc(p.name)}"
+                   class="inline-flex items-center justify-center gap-1.5 sm:gap-2 text-[11px] sm:text-sm font-medium text-neutral-300 hover:text-white border border-white/10 hover:border-teal/30 px-2.5 py-1.5 sm:px-4 sm:py-2.5 rounded-sm transition-all duration-300 uppercase tracking-wider cursor-pointer">
+                  Reservar
                   <svg class="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
                   </svg>
-                </a>
+                </button>
               </div>
             </div>
           </div>`;
       }).join("");
+
+      grid.querySelectorAll<HTMLElement>("[data-reserve]").forEach(btn => {
+        btn.addEventListener("click", () => openModal(parseInt(btn.dataset.id || "0", 10), btn.dataset.name || ""));
+      });
     } catch {
       section?.classList.add("hidden");
     }

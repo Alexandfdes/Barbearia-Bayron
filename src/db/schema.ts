@@ -143,3 +143,22 @@ export const combos = sqliteTable('combos', {
 }, (table) => [
   index('combos_active_idx').on(table.active),
 ]);
+
+// Reservas de produto — cliente reserva pelo site pra retirar na barbearia
+// (sem serviço). O barbeiro vê a lista no admin e marca como retirado (vira
+// venda no faturamento) ou cancela. Nome/preço são snapshot do momento da reserva.
+export const reservations = sqliteTable('reservations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  productId: integer('product_id').references(() => products.id), // null se o produto for removido depois
+  productName: text('product_name').notNull(),
+  priceCents: integer('price_cents').notNull(), // unitário, snapshot
+  quantity: integer('quantity').notNull().default(1),
+  customerName: text('customer_name').notNull(),
+  customerPhone: text('customer_phone').notNull(),
+  status: text('status', { enum: ['pending', 'fulfilled', 'cancelled'] }).notNull().default('pending'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  handledById: integer('handled_by_id').references(() => barbers.id),
+  handledAt: text('handled_at'),
+}, (table) => [
+  index('reservations_status_idx').on(table.status),
+]);

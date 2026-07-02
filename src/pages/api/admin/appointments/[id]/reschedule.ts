@@ -110,10 +110,14 @@ export const POST: APIRoute = async ({ params, request }) => {
     return json({ error: 'Barbeiro não trabalha nesse dia' }, 400);
   }
 
-  const open  = fromZonedTime(`${newDateStr}T${whRows[0].startTime}:00`, TZ);
-  const close = fromZonedTime(`${newDateStr}T${whRows[0].endTime}:00`,   TZ);
+  // O slot precisa caber inteiro em ALGUMA janela do dia (manhã + tarde etc.).
+  const fitsAnyWindow = whRows.some(wh => {
+    const open  = fromZonedTime(`${newDateStr}T${wh.startTime}:00`, TZ);
+    const close = fromZonedTime(`${newDateStr}T${wh.endTime}:00`,   TZ);
+    return newStart >= open && newEnd <= close;
+  });
 
-  if (newStart < open || newEnd > close) {
+  if (!fitsAnyWindow) {
     return json({ error: 'Horário fora do expediente do barbeiro' }, 400);
   }
 
