@@ -23,5 +23,5 @@ COPY --from=build /app/package.json ./package.json
 VOLUME ["/data"]
 EXPOSE 4321
 
-# Roda as migrations e depois inicia o servidor
-CMD ["sh", "-c", "node scripts/startup.mjs && node dist/server/entry.mjs"]
+# Roda as migrations, sobe o daemon de backup (diário às 03:00) e inicia o servidor
+CMD ["sh", "-c", "node scripts/startup.mjs && (node scripts/backup-daemon.mjs &) && node dist/server/entry.mjs"]
