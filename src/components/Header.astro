@@ -58,28 +58,30 @@ const { solid = false } = Astro.props;
       </button>
     </div>
   </div>
-
-  <!-- Mobile Menu Overlay -->
-  <div
-    id="mobile-menu"
-    class="fixed inset-0 bg-dark z-40 flex flex-col items-center justify-center gap-8 opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"
-  >
-    <nav class="flex flex-col items-center gap-8 text-xl font-medium text-neutral-400 uppercase tracking-wider">
-      <a href="#servicos" class="mobile-link hover:text-white transition-colors">Serviços</a>
-      <a href="#combo" class="mobile-link hover:text-white transition-colors">Combos</a>
-      <a href="#produtos" class="mobile-link hover:text-white transition-colors">Produtos</a>
-      <a href="#depoimentos" class="mobile-link hover:text-white transition-colors">Depoimentos</a>
-      <a href="#faq" class="mobile-link hover:text-white transition-colors">FAQ</a>
-      <a href="#contato" class="mobile-link hover:text-white transition-colors">Contato</a>
-      <a
-        href="/portal"
-        class="bg-teal hover:bg-teal-hover text-white px-8 py-3 rounded-md mt-4 tracking-widest font-bold"
-      >
-        Portal
-      </a>
-    </nav>
-  </div>
 </header>
+
+<!-- Mobile Menu Overlay — FORA do <header> de propósito: o header ganha
+     backdrop-blur ao rolar, e backdrop-filter cria um containing block que
+     quebraria o position:fixed deste overlay se ele fosse filho do header. -->
+<div
+  id="mobile-menu"
+  class="fixed inset-0 bg-dark z-40 flex flex-col items-center justify-center gap-8 opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"
+>
+  <nav class="flex flex-col items-center gap-8 text-xl font-medium text-neutral-400 uppercase tracking-wider">
+    <a href="#servicos" class="mobile-link hover:text-white transition-colors">Serviços</a>
+    <a href="#combo" class="mobile-link hover:text-white transition-colors">Combos</a>
+    <a href="#produtos" class="mobile-link hover:text-white transition-colors">Produtos</a>
+    <a href="#depoimentos" class="mobile-link hover:text-white transition-colors">Depoimentos</a>
+    <a href="#faq" class="mobile-link hover:text-white transition-colors">FAQ</a>
+    <a href="#contato" class="mobile-link hover:text-white transition-colors">Contato</a>
+    <a
+      href="/portal"
+      class="bg-teal hover:bg-teal-hover text-white px-8 py-3 rounded-md mt-4 tracking-widest font-bold"
+    >
+      Portal
+    </a>
+  </nav>
+</div>
 
 <script>
   document.addEventListener('DOMContentLoaded', () => {

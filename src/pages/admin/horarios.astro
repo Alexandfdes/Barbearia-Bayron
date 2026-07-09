@@ -57,6 +57,8 @@ interface DayConfig {
   short: string;
   manha: Shift;
   tarde: Shift;
+  /** Janela única atravessando o almoço (ex: 09:00–19:00) → dia contínuo, sem pausa */
+  continuous: boolean;
 }
 
 // Agrupa janelas por dia, ordenadas por horário de início.
@@ -77,7 +79,9 @@ function buildDay(i: number): DayConfig {
   const tarde: Shift = wins[1]
     ? { enabled: true, start: wins[1].start, end: wins[1].end }
     : { enabled: false, ...DEFAULT_TARDE };
-  return { weekday: i, label: WEEKDAY_LABELS[i], short: WEEKDAY_SHORT[i], manha, tarde };
+  // Dia contínuo: janela única que começa de manhã e atravessa o horário de almoço.
+  const continuous = manha.enabled && !tarde.enabled && manha.start < '12:00' && manha.end > '13:00';
+  return { weekday: i, label: WEEKDAY_LABELS[i], short: WEEKDAY_SHORT[i], manha, tarde, continuous };
 }
 
 const weekGrid: DayConfig[] = Array.from({ length: 7 }, (_, i) => buildDay(i));
@@ -103,8 +107,8 @@ const clientData = { selectedBarberId, isAdmin };
       <h1 class="text-lg font-medium text-neutral-100">Horários de Expediente</h1>
       <p class="text-sm text-neutral-500 mt-1">
         {isAdmin
-          ? 'Defina os turnos de cada barbeiro por dia. Você pode ter manhã e tarde com um intervalo no meio.'
-          : 'Configure seus turnos de trabalho por dia. Você pode separar manhã e tarde com um intervalo no meio.'}
+          ? 'Defina os turnos de cada barbeiro por dia. Manhã e tarde com intervalo, ou marque "Sem pausa" pra trabalhar direto.'
+          : 'Configure seus turnos por dia. Manhã e tarde com intervalo, ou marque "Sem pausa" pra trabalhar direto.'}
       </p>
     </div>
 
@@ -137,13 +141,6 @@ const clientData = { selectedBarberId, isAdmin };
             {configuredDays} {configuredDays === 1 ? 'dia configurado' : 'dias configurados'}
           </p>
         </div>
-        <button
-          type="button"
-          id="fill-default"
-          class="text-[11px] px-3 py-2 rounded border border-teal/30 text-teal-light hover:bg-teal/10 transition-colors text-right leading-tight"
-        >
-          Preencher Seg–Sáb<br />Manhã 08–11 · Tarde 14–19
-        </button>
       </div>
     </div>
 
@@ -171,7 +168,15 @@ const clientData = { selectedBarberId, isAdmin };
 
               <div class="px-4 pb-3 space-y-2">
                 {shifts.map(s => (
-                  <div class="flex items-center gap-2.5">
+                  <div
+                    class:list={[
+                      'flex items-center gap-2.5',
+                      s.period === 'tarde' && day.continuous ? 'hidden' : ''
+                    ]}
+                    data-shift-row
+                    data-weekday={String(day.weekday)}
+                    data-period={s.period}
+                  >
                     <button
                       type="button"
                       data-shift-toggle
@@ -190,7 +195,12 @@ const clientData = { selectedBarberId, isAdmin };
                       ]} />
                     </button>
 
-                    <span class="w-12 shrink-0 text-xs text-neutral-400">{s.label}</span>
+                    <span
+                      class="w-12 shrink-0 text-xs text-neutral-400"
+                      data-shift-label
+                      data-weekday={String(day.weekday)}
+                      data-period={s.period}
+                    >{s.period === 'manha' && day.continuous ? 'Dia todo' : s.label}</span>
 
                     <input
                       type="time"
@@ -213,6 +223,17 @@ const clientData = { selectedBarberId, isAdmin };
                     />
                   </div>
                 ))}
+
+                <label class="flex items-center gap-2 pt-1 cursor-pointer select-none w-fit">
+                  <input
+                    type="checkbox"
+                    data-continuous
+                    data-weekday={String(day.weekday)}
+                    checked={day.continuous}
+                    class="w-3.5 h-3.5 rounded border-white/20 bg-dark-surface accent-teal cursor-pointer"
+                  />
+                  <span class="text-[11px] text-neutral-500">Sem pausa (dia contínuo)</span>
+                </label>
               </div>
             </div>
           );
@@ -302,6 +323,35 @@ const clientData = { selectedBarberId, isAdmin };
     if (el) el.textContent = `${n} ${n === 1 ? 'dia configurado' : 'dias configurados'}`;
   }
 
+  // Dia contínuo (sem pausa): colapsa pra uma janela única usando a linha da manhã
+  function setContinuous(weekday, on) {
+    const box = document.querySelector(`[data-continuous][data-weekday="${weekday}"]`);
+    if (box) box.checked = on;
+    const tardeRow = document.querySelector(`[data-shift-row][data-weekday="${weekday}"][data-period="tarde"]`);
+    const manhaLabel = document.querySelector(`[data-shift-label][data-weekday="${weekday}"][data-period="manha"]`);
+    if (tardeRow) tardeRow.classList.toggle('hidden', on);
+    if (manhaLabel) manhaLabel.textContent = on ? 'Dia todo' : 'Manhã';
+  }
+
+  document.querySelectorAll('[data-continuous]').forEach(box => {
+    box.addEventListener('change', () => {
+      const wd = box.dataset.weekday;
+      const on = box.checked;
+      if (on) {
+        const m = shiftEls(wd, 'manha');
+        const t = shiftEls(wd, 'tarde');
+        // Mescla os turnos numa janela só: início da manhã → fim da tarde
+        if (isOn(t.toggle) && t.end?.value && m.end && t.end.value > m.end.value) {
+          m.end.value = t.end.value;
+        }
+        setShift(wd, 'tarde', false);
+        setShift(wd, 'manha', true);
+      }
+      setContinuous(wd, on);
+      refreshDay(wd);
+    });
+  });
+
   // Toggles dos turnos
   document.querySelectorAll('[data-shift-toggle]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -312,22 +362,6 @@ const clientData = { selectedBarberId, isAdmin };
   // Mudou um horário → atualiza o resumo do dia
   document.querySelectorAll('[data-shift-start], [data-shift-end]').forEach(inp => {
     inp.addEventListener('change', () => refreshDay(inp.dataset.weekday));
-  });
-
-  // Preencher padrão Seg–Sáb (manhã 08–11 / tarde 14–19), domingo de folga
-  document.getElementById('fill-default')?.addEventListener('click', () => {
-    for (let wd = 1; wd <= 6; wd++) {
-      const m = shiftEls(wd, 'manha');
-      const t = shiftEls(wd, 'tarde');
-      if (m.start) m.start.value = '08:00';
-      if (m.end)   m.end.value   = '11:00';
-      if (t.start) t.start.value = '14:00';
-      if (t.end)   t.end.value   = '19:00';
-      setShift(wd, 'manha', true);
-      setShift(wd, 'tarde', true);
-    }
-    setShift(0, 'manha', false);
-    setShift(0, 'tarde', false);
   });
 
   // Salvar

@@ -38,7 +38,7 @@
         </div>
         <div>
           <label class="block text-xs text-neutral-500 uppercase tracking-widest mb-1.5">WhatsApp (DDD + número)</label>
-          <input id="reserve-phone" type="tel" inputmode="numeric" maxlength="20" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-teal/50" />
+          <input id="reserve-phone" type="tel" inputmode="numeric" maxlength="15" placeholder="(88) 99999-0000" class="w-full bg-dark-surface border border-white/10 rounded px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-teal/50 tabular-nums" />
         </div>
         <div id="reserve-error" class="hidden text-red-400 text-xs text-center"></div>
         <button id="reserve-confirm" type="button" class="w-full bg-teal hover:bg-teal-hover text-white font-bold uppercase tracking-widest text-xs py-3 rounded transition-colors disabled:opacity-50">Reservar</button>
@@ -76,6 +76,16 @@
     let currentId = 0;
 
     const showErr = (m: string) => { if (errEl) { errEl.textContent = m; errEl.classList.remove("hidden"); } };
+
+    // Máscara progressiva: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX (fixo)
+    phoneEl?.addEventListener("input", () => {
+      const d = phoneEl.value.replace(/\D/g, "").slice(0, 11);
+      if (d.length === 0)      phoneEl.value = "";
+      else if (d.length <= 2)  phoneEl.value = `(${d}`;
+      else if (d.length <= 6)  phoneEl.value = `(${d.slice(0, 2)}) ${d.slice(2)}`;
+      else if (d.length <= 10) phoneEl.value = `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+      else                     phoneEl.value = `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+    });
 
     function openModal(id: number, name: string) {
       currentId = id;

@@ -2,6 +2,7 @@
 export const prerender = false;
 
 import AdminLayout from '../../layouts/AdminLayout.astro';
+import printLogo from '../../assets/Logo-Bayron3-256.png';
 import { getSession } from '../../lib/session.js';
 import { db } from '../../db/index.js';
 import { appointments, appointmentItems, barbers, services, workingHours, timeOff, productSales } from '../../db/schema.js';
@@ -320,7 +321,7 @@ const geradoEm = formatInTimeZone(nowUtc, TZ, "dd/MM/yyyy 'às' HH:mm");
 
     <!-- Cabeçalho que aparece SÓ na impressão -->
     <div class="print-only" id="print-head">
-      <div class="print-logo"><img src="/Logo-Bayron3.png" alt="Barbearia Bayron" /></div>
+      <div class="print-logo"><img src={printLogo.src} alt="Barbearia Bayron" /></div>
       <div class="print-titles">
         <strong>Barbearia Bayron — Relatório</strong>
         <span>{tituloPainel} · {subtitulo}</span>

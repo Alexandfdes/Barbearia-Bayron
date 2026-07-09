@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Fontes self-hosted (variáveis: um arquivo cobre todos os pesos 400–900).
+   Itálico só do Playfair — usado no Hero; itálico do Inter é sintetizado. */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/playfair-display";
+@import "@fontsource-variable/playfair-display/wght-italic.css";
+
 /* src/styles/global.css */
 @theme {
   /* Paleta Dark Industrial */
@@ -22,8 +28,8 @@
   --color-gray: #8a8a8a;
   --color-gray-light: #a3a3a3;
 
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-sans: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  --font-serif: 'Playfair Display Variable', 'Playfair Display', Georgia, serif;
 }
 
 @layer base {

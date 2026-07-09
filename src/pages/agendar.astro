@@ -471,8 +471,9 @@ function renderStep4() {
           <label class="block text-sm text-neutral-400 mb-1.5">
             WhatsApp <span class="text-neutral-600 font-normal">(para avisar a barbearia)</span>
           </label>
-          <input id="inp-phone" type="tel" placeholder="(88) 99999-0000" autocomplete="tel"
-            class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm"
+          <input id="inp-phone" type="tel" inputmode="numeric" placeholder="(88) 99999-0000" autocomplete="tel"
+            maxlength="15"
+            class="w-full bg-dark-surface border border-white/10 focus:border-teal rounded-md px-4 py-3 text-neutral-200 placeholder-neutral-600 outline-none transition-colors text-sm tabular-nums"
             required />
         </div>
         <div>
@@ -507,6 +508,19 @@ function renderStep4() {
       else if (d.length <= 2)  bd.value = d;
       else if (d.length <= 4)  bd.value = `${d.slice(0, 2)}/${d.slice(2)}`;
       else                     bd.value = `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+    });
+  }
+
+  // Máscara (DD) 99999-9999 no campo de WhatsApp (aceita fixo de 10 dígitos)
+  const ph = document.getElementById('inp-phone') as HTMLInputElement | null;
+  if (ph) {
+    ph.addEventListener('input', () => {
+      const d = ph.value.replace(/\D/g, '').slice(0, 11);
+      if (d.length === 0)      ph.value = '';
+      else if (d.length <= 2)  ph.value = `(${d}`;
+      else if (d.length <= 6)  ph.value = `(${d.slice(0, 2)}) ${d.slice(2)}`;
+      else if (d.length <= 10) ph.value = `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+      else                     ph.value = `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
     });
   }
 
