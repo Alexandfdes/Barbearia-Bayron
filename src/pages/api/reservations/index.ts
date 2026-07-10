@@ -7,6 +7,7 @@ import { db } from '../../../db/index.js';
 import { products, reservations } from '../../../db/schema.js';
 import { json } from '../../../lib/api.js';
 import { checkRateLimit } from '../../../lib/rateLimit.js';
+import { getClientIp } from '../../../lib/clientIp.js';
 import { normalizePhone } from '../../../lib/phone.js';
 
 const bodySchema = z.object({
@@ -18,12 +19,7 @@ const bodySchema = z.object({
 
 // Reserva pública de produto (cliente reserva pra retirar na barbearia).
 export const POST: APIRoute = async ({ request, clientAddress }) => {
-  let ip = 'unknown';
-  try {
-    ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
-      ?? request.headers.get('x-real-ip')
-      ?? clientAddress ?? 'unknown';
-  } catch { /* noop */ }
+  const ip = getClientIp(request, clientAddress);
 
   const ipRl = checkRateLimit(`reservation-ip:${ip}`, { maxTries: 10 });
   if (!ipRl.ok) return json({ error: `Muitas reservas deste dispositivo. Tente em ${ipRl.retryAfterSecs}s.` }, 429);

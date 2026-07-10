@@ -9,6 +9,7 @@ import { barbers } from '../../../db/schema.js';
 import { json } from '../../../lib/api.js';
 import { makeSessionCookie } from '../../../lib/session.js';
 import { checkRateLimit, resetRateLimit } from '../../../lib/rateLimit.js';
+import { getClientIp } from '../../../lib/clientIp.js';
 
 const bodySchema = z.object({
   slug:     z.string().min(1).max(50),
@@ -26,8 +27,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   const { slug: rawSlug, password } = parsed.data;
   const slug = rawSlug.toLowerCase();
 
-  let ip = 'unknown';
-  try { ip = clientAddress; } catch { /* noop */ }
+  const ip = getClientIp(request, clientAddress);
 
   // 2 camadas de rate limit:
   // (1) Global por IP — protege contra varredura de slugs (15 tentativas / 15min)

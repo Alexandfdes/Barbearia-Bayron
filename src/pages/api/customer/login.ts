@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { sqlite } from '../../../db/index.js';
 import { json } from '../../../lib/api.js';
 import { checkRateLimit } from '../../../lib/rateLimit.js';
+import { getClientIp } from '../../../lib/clientIp.js';
 import { makeCustomerSessionCookie, normalizePhone } from '../../../lib/customerSession.js';
 
 const bodySchema = z.object({
@@ -29,11 +30,9 @@ const stmtCheckAnyPhone = sqlite.prepare(`
   WHERE customer_phone = ?
 `);
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, clientAddress }) => {
   // Rate limit por IP — protege contra brute-force de números/datas
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
-          ?? request.headers.get('x-real-ip')
-          ?? 'unknown';
+  const ip = getClientIp(request, clientAddress);
   const rl = checkRateLimit(`customer-login:${ip}`);
   if (!rl.ok) {
     return json({ error: 'Muitas tentativas. Tente novamente em alguns minutos.' }, 429);

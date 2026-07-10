@@ -72,8 +72,10 @@ async function maybeUploadToS3(filePath) {
 
   try {
     const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+    // Backblaze mostra o endpoint sem esquema; o SDK exige URL completa.
+    const endpoint = /^https?:\/\//.test(S3_ENDPOINT) ? S3_ENDPOINT : `https://${S3_ENDPOINT}`;
     const client = new S3Client({
-      endpoint: S3_ENDPOINT,
+      endpoint,
       region: S3_REGION ?? 'us-east-1',
       credentials: { accessKeyId: S3_ACCESS_KEY_ID, secretAccessKey: S3_SECRET_ACCESS_KEY },
       forcePathStyle: true,

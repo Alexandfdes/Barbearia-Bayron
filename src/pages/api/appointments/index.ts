@@ -9,6 +9,7 @@ import { combos, products } from '../../../db/schema.js';
 import { json } from '../../../lib/api.js';
 import { bookAppointment } from '../../../lib/bookAppointment.js';
 import { checkRateLimit } from '../../../lib/rateLimit.js';
+import { getClientIp } from '../../../lib/clientIp.js';
 
 // Idade mínima 5 anos, máxima 100 anos — só sanidade
 const MIN_BIRTH_AGE_YEARS = 5;
@@ -37,14 +38,8 @@ function isPlausibleBirthdate(iso: string): boolean {
 }
 
 export const POST: APIRoute = async ({ request, clientAddress }) => {
-  // IP do cliente (atrás de nginx, prioriza x-forwarded-for)
-  let ip = 'unknown';
-  try {
-    ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
-      ?? request.headers.get('x-real-ip')
-      ?? clientAddress
-      ?? 'unknown';
-  } catch { /* clientAddress pode lançar em alguns adapters */ }
+  // IP real do cliente atrás do proxy (resistente a spoofing do x-forwarded-for)
+  const ip = getClientIp(request, clientAddress);
 
   // Camada 1: anti-flood por IP (a idempotency key cobre duplo-clique, não abuso)
   const ipRl = checkRateLimit(`booking-ip:${ip}`, { maxTries: 15 });
