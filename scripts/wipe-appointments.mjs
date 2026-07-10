@@ -39,40 +39,45 @@ async function main() {
   // 2. Conta antes
   const db = new Database(DB_PATH);
   const before = db.prepare('SELECT COUNT(*) AS c FROM appointments').get();
+  const itemsBefore = db.prepare('SELECT COUNT(*) AS c FROM appointment_items').get();
   const byStatus = db.prepare('SELECT status, COUNT(*) AS c FROM appointments GROUP BY status').all();
-  console.log(`[wipe] Antes: ${before.c} appointments`);
+  console.log(`[wipe] Antes: ${before.c} appointments, ${itemsBefore.c} appointment_items`);
   console.log(`[wipe] Por status:`, byStatus);
 
-  if (before.c === 0) {
-    console.log('[wipe] Tabela já está vazia. Saindo sem alterar.');
+  if (before.c === 0 && itemsBefore.c === 0) {
+    console.log('[wipe] Já está vazio. Saindo sem alterar.');
     db.close();
     return;
   }
 
   // 3. Countdown de cancelamento
-  console.log('[wipe] Apagando TODOS os agendamentos em 5 segundos. Ctrl+C pra cancelar.');
+  console.log('[wipe] Apagando TODOS os agendamentos (e itens ligados) em 5 segundos. Ctrl+C pra cancelar.');
   for (let i = 5; i > 0; i--) {
     process.stdout.write(`  ${i}... `);
     await new Promise(r => setTimeout(r, 1000));
   }
   console.log('');
 
-  // 4. Apaga
+  // 4. Apaga — itens PRIMEIRO (FK appointment_items.appointment_id → appointments.id
+  //    não tem ON DELETE CASCADE; apagar na ordem errada deixaria itens órfãos).
   db.pragma('wal_checkpoint(TRUNCATE)');
   const tx = db.transaction(() => {
-    const res = db.prepare('DELETE FROM appointments').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name='appointments'").run();
-    return res.changes;
+    const itemsRes = db.prepare('DELETE FROM appointment_items').run();
+    const apptRes = db.prepare('DELETE FROM appointments').run();
+    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('appointments','appointment_items')").run();
+    return { items: itemsRes.changes, appts: apptRes.changes };
   });
   const removed = tx();
   db.exec('VACUUM');
 
   // 5. Verifica
   const after = db.prepare('SELECT COUNT(*) AS c FROM appointments').get();
-  console.log(`[wipe] Apagados: ${removed} appointments. Restantes: ${after.c}.`);
+  const itemsAfter = db.prepare('SELECT COUNT(*) AS c FROM appointment_items').get();
+  console.log(`[wipe] Apagados: ${removed.appts} appointments + ${removed.items} appointment_items.`);
+  console.log(`[wipe] Restantes: ${after.c} appointments, ${itemsAfter.c} items.`);
 
-  // 6. Confere que tabelas auxiliares ficaram intactas
-  for (const t of ['barbers', 'services', 'barber_services', 'working_hours', 'time_off']) {
+  // 6. Confere que tabelas de configuração ficaram intactas
+  for (const t of ['barbers', 'services', 'barber_services', 'working_hours', 'time_off', 'products', 'combos']) {
     const r = db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get();
     console.log(`[wipe]   ${t}: ${r.c} linhas (preservada)`);
   }

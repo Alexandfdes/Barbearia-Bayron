@@ -53,22 +53,28 @@ export const POST: APIRoute = async ({ request }) => {
 
   const active = String(form.get('active') ?? 'true') !== 'false';
 
-  let image: string | null = null;
-  const file = form.get('image');
-  if (file && file instanceof File && file.size > 0) {
-    const res = await saveProductImage(file);
-    if ('error' in res) return json({ error: res.error }, 400);
-    image = res.path;
+  try {
+    let image: string | null = null;
+    const file = form.get('image');
+    if (file && file instanceof File && file.size > 0) {
+      const res = await saveProductImage(file);
+      if ('error' in res) return json({ error: res.error }, 400);
+      image = res.path;
+    }
+
+    const sorts = db.select({ s: products.sortOrder }).from(products).all();
+    const nextSort = (sorts.length ? Math.max(...sorts.map(r => r.s)) : 0) + 1;
+
+    const slug = uniqueSlug(slugify(name));
+
+    const result = db.insert(products).values({
+      slug, name, shortDesc, priceCents, image, active, sortOrder: nextSort,
+    }).run();
+
+    return json({ ok: true, id: Number(result.lastInsertRowid), slug }, 201);
+  } catch (err) {
+    console.error('[api/admin/products POST]', err);
+    const msg = err instanceof Error ? err.message : 'erro desconhecido';
+    return json({ error: `Falha ao salvar produto: ${msg}` }, 500);
   }
-
-  const sorts = db.select({ s: products.sortOrder }).from(products).all();
-  const nextSort = (sorts.length ? Math.max(...sorts.map(r => r.s)) : 0) + 1;
-
-  const slug = uniqueSlug(slugify(name));
-
-  const result = db.insert(products).values({
-    slug, name, shortDesc, priceCents, image, active, sortOrder: nextSort,
-  }).run();
-
-  return json({ ok: true, id: Number(result.lastInsertRowid), slug }, 201);
 };
